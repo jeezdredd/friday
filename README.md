@@ -110,7 +110,8 @@ python -m friday --speak    # text REPL, responses are spoken
 python -m friday --voice    # wake word mode
 python -m friday --ptt      # push-to-talk mode (Enter to start/stop)
 python -m friday --tools    # list registered tools
-python -m friday -v ...     # INFO logging, including tool calls and false triggers
+python -m friday -v ...     # Friday's logs: timings, tool calls, false triggers
+python -m friday -vv ...    # plus all library logs (HTTP requests, Whisper)
 ```
 
 REPL commands: `/reset` clears the conversation, `exit` quits.
@@ -274,6 +275,8 @@ Contract:
 - Parameters without defaults are required.
 - Return `str` or any JSON-serializable value.
 - Exceptions are caught and returned to the model as `is_error` results; they do not crash the loop.
+- `@tool(available=...)` takes a zero-argument predicate; when it returns false the tool is hidden from the model (e.g. Home Assistant tools without `HA_TOKEN`), so the model does not try to use unconfigured integrations.
+- Raise `ToolError` (or a subclass) for expected failures such as missing configuration or permissions: it is reported to the model and logged without a traceback. Other exceptions are logged with a traceback as bugs.
 - `@tool(filler="...")` sets the phrase spoken while the tool runs; `filler=""` keeps silent for fast tools, omitted uses a generic phrase.
 - Tools with side effects that cannot be undone must be confirmed by the user; the system prompt enforces this, keep the tool description explicit about it.
 

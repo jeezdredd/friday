@@ -202,12 +202,17 @@ def main() -> None:
     parser.add_argument("--speak", action="store_true", help="озвучивать ответы в текстовом режиме")
     parser.add_argument("--tools", action="store_true", help="список инструментов")
     parser.add_argument("--say", metavar="TEXT", help="озвучить текст без LLM, чтобы проверить произношение")
-    parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument(
+        "-v", "--verbose", action="count", default=0, help="-v: логи и тайминги Пятницы, -vv: плюс все библиотеки"
+    )
     args = parser.parse_args()
 
+    # -v показывает только логи самой Пятницы (тайминги, инструменты), без запросов httpx и whisper
     logging.basicConfig(
-        level=logging.INFO if args.verbose else logging.WARNING, format="%(levelname)s %(name)s: %(message)s"
+        level=logging.INFO if args.verbose >= 2 else logging.WARNING, format="%(levelname)s %(name)s: %(message)s"
     )
+    if args.verbose:
+        logging.getLogger("friday").setLevel(logging.INFO)
 
     if args.say:
         say_test(args.say)

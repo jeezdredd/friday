@@ -43,6 +43,12 @@ class Tool:
     # Что сказать голосом, пока инструмент работает и модель думает над ответом.
     # None = случайная общая фраза, "" = молчать (для быстрых действий вроде света).
     filler: str | None = None
+    # Показывать ли инструмент модели прямо сейчас. Например, инструменты умного дома
+    # не нужны, пока не настроен Home Assistant: иначе модель будет пытаться ими пользоваться.
+    available: Callable[[], bool] | None = None
+
+    def is_available(self) -> bool:
+        return self.available is None or bool(self.available())
 
     def to_anthropic(self) -> dict[str, Any]:
         return {
@@ -62,14 +68,20 @@ class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, Tool] = {}
 
-    def register(self, func: Callable[..., Any], name: str | None = None, filler: str | None = None) -> Tool:
+    def register(
+        self,
+        func: Callable[..., Any],
+        name: str | None = None,
+        filler: str | None = None,
+        available: Callable[[], bool] | None = None,
+    ) -> Tool:
         tool_name = name or func.__name__
         if tool_name in self._tools:
             raise ValueError(f"Инструмент {tool_name!r} уже зарегистрирован")
         description = inspect.cleandoc(func.__doc__ or "").strip()
         if not description:
             raise ValueError(f"У инструмента {tool_name!r} нет docstring, LLM не поймёт, зачем он")
-        t = Tool(tool_name, description, func, build_schema(func), filler)
+        t = Tool(tool_name, description, func, build_schema(func), filler, available)
         self._tools[tool_name] = t
         return t
 
@@ -79,8 +91,11 @@ class ToolRegistry:
     def all(self) -> list[Tool]:
         return list(self._tools.values())
 
+    def available(self) -> list[Tool]:
+        return [t for t in self._tools.values() if t.is_available()]
+
     def schemas(self) -> list[dict[str, Any]]:
-        return [t.to_anthropic() for t in self._tools.values()]
+        return [t.to_anthropic() for t in self.available()]
 
     def execute(self, name: str, arguments: dict[str, Any]) -> tuple[str, bool]:
         """Возвращает (результат, is_error). Исключения не пробрасываются наружу,
@@ -91,21 +106,41 @@ class ToolRegistry:
         try:
             return t.run(arguments), False
         except Exception as exc:
+            if is_expected(exc):
+                # ожидаемая ситуация (не настроено, нет разрешения, неверный аргумент): без трейсбека
+                log.warning("Tool %s: %s", name, exc)
+                return f"Ошибка: {exc}", True
             log.exception("Tool %s failed", name)
             return f"Ошибка: {type(exc).__name__}: {exc}", True
+
+
+class ToolError(RuntimeError):
+    """Ожидаемая ошибка инструмента: текст понятен пользователю, трейсбек не нужен.
+    Наследуй от неё ошибки интеграций (не настроено, нет доступа, не найдено)."""
+
+
+def is_expected(exc: Exception) -> bool:
+    return isinstance(exc, ToolError | ValueError)
 
 
 registry = ToolRegistry()
 
 
-def tool(func: Callable[..., Any] | None = None, *, name: str | None = None, filler: str | None = None):
+def tool(
+    func: Callable[..., Any] | None = None,
+    *,
+    name: str | None = None,
+    filler: str | None = None,
+    available: Callable[[], bool] | None = None,
+):
     """Декоратор: регистрирует функцию как инструмент ассистента.
 
     filler: фраза, которую Пятница скажет, пока инструмент выполняется.
+    available: функция без аргументов; если вернула False, модель инструмент не видит.
     """
 
     def wrap(f: Callable[..., Any]) -> Callable[..., Any]:
-        registry.register(f, name=name, filler=filler)
+        registry.register(f, name=name, filler=filler, available=available)
         return f
 
     return wrap(func) if func is not None else wrap

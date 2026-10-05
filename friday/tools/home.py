@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+from functools import partial
 from typing import Annotated, Any
 
 from friday.config import settings
 from friday.integrations.homeassistant import get_ha
 from friday.tools import tool
+
+
+def ha_configured() -> bool:
+    return bool(settings.ha_token)
+
+
+home_tool = partial(tool, available=ha_configured)
 
 
 def _resolve_light(entity_id: str | None) -> str:
@@ -29,13 +37,13 @@ def _short_state(s: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-@tool(filler="")
+@home_tool(filler="")
 def list_lights() -> list[dict[str, Any]]:
     """Список всех ламп в доме с текущим состоянием (вкл/выкл, яркость, цвет)."""
     return [_short_state(s) for s in get_ha().entities("light")]
 
 
-@tool(filler="")
+@home_tool(filler="")
 def get_light_state(
     entity_id: Annotated[str | None, "entity_id лампы, например light.room. Пусто = лампа по умолчанию"] = None,
 ) -> dict[str, Any]:
@@ -43,7 +51,7 @@ def get_light_state(
     return _short_state(get_ha().state(_resolve_light(entity_id)))
 
 
-@tool(filler="")
+@home_tool(filler="")
 def set_light(
     on: Annotated[bool, "true = включить, false = выключить"],
     entity_id: Annotated[str | None, "entity_id лампы. Пусто = лампа по умолчанию"] = None,
@@ -72,7 +80,7 @@ def set_light(
     return f"{target} включена: {data}"
 
 
-@tool
+@home_tool()
 def get_entity_state(
     entity_id: Annotated[str, "Любой entity_id из Home Assistant, например sensor.room_temperature"],
 ) -> dict[str, Any]:
@@ -81,7 +89,7 @@ def get_entity_state(
     return {"entity_id": entity_id, "state": s["state"], "attributes": s.get("attributes", {})}
 
 
-@tool(filler="Смотрю датчики.")
+@home_tool(filler="Смотрю датчики.")
 def list_sensors() -> list[dict[str, Any]]:
     """Список всех датчиков в доме с текущими значениями."""
     return [

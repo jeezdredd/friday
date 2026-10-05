@@ -2,9 +2,9 @@ import importlib
 import logging
 import pkgutil
 
-from friday.tools.registry import Tool, ToolRegistry, registry, tool
+from friday.tools.registry import Tool, ToolError, ToolRegistry, registry, tool
 
-__all__ = ["Tool", "ToolRegistry", "load_all", "registry", "tool"]
+__all__ = ["Tool", "ToolError", "ToolRegistry", "load_all", "registry", "tool"]
 
 log = logging.getLogger(__name__)
 

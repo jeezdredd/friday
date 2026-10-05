@@ -11,9 +11,10 @@ from typing import Any
 import httpx
 
 from friday.config import settings
+from friday.tools.registry import ToolError
 
 
-class HomeAssistantError(RuntimeError):
+class HomeAssistantError(ToolError):
     pass
 
 

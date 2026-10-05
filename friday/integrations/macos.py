@@ -17,6 +17,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from friday.tools.registry import ToolError
+
 IS_MAC = sys.platform == "darwin"
 
 APP_DIRS = (
@@ -32,7 +34,7 @@ KEY_BRIGHTNESS_UP = 144
 KEY_BRIGHTNESS_DOWN = 145
 
 
-class MacError(RuntimeError):
+class MacError(ToolError):
     pass
 
 
