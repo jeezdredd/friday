@@ -16,7 +16,7 @@ voice = [
     "numpy>=1.26",
     "sounddevice>=0.4",
     "faster-whisper>=1.0",
-    "vosk>=0.3.45",
+    "vosk>=0.3.42",
 ]
 # локальный голос Silero (тянет torch, ~1 ГБ)
 silero = [
