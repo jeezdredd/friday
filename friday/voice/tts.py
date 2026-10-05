@@ -22,6 +22,7 @@ from typing import Protocol
 import httpx
 
 from friday.config import settings
+from friday.voice.speech_text import prepare_for_speech
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ class MacSay:
         self.rate = rate or settings.tts_rate
 
     def speak(self, text: str) -> None:
+        text = prepare_for_speech(text, stress="none")
         if text:
             subprocess.run(["say", "-v", self.voice, "-r", str(self.rate), text], check=False)
 
@@ -59,10 +61,26 @@ class ElevenLabs:
             timeout=30,
         )
 
-    def synthesize(self, text: str) -> bytes:
-        body = {"text": text, "model_id": settings.elevenlabs_model}
-        if "v2_5" in settings.elevenlabs_model:  # явный язык поддерживают только flash/turbo v2.5
+    @staticmethod
+    def build_request(text: str) -> dict:
+        body: dict = {
+            "text": prepare_for_speech(text, stress=settings.elevenlabs_stress),
+            "model_id": settings.elevenlabs_model,
+            "voice_settings": {
+                "stability": settings.elevenlabs_stability,
+                "similarity_boost": settings.elevenlabs_similarity,
+                "style": settings.elevenlabs_style,
+                "speed": settings.elevenlabs_speed,
+                "use_speaker_boost": settings.elevenlabs_speaker_boost,
+            },
+        }
+        if "v2_5" in settings.elevenlabs_model:  # явный язык поддерживают только flash v2.5
             body["language_code"] = settings.stt_language
+        return body
+
+    def synthesize(self, text: str) -> bytes:
+        body = self.build_request(text)
+        log.info("TTS text: %s", body["text"])
         resp = self._client.post(
             f"/text-to-speech/{settings.elevenlabs_voice_id}",
             params={"output_format": f"pcm_{self.SAMPLE_RATE}"},
@@ -98,8 +116,12 @@ class Silero:
     def speak(self, text: str) -> None:
         import sounddevice as sd
 
-        for chunk in split_sentences(normalize_ru(text), self.MAX_CHARS):
-            audio = self._model.apply_tts(text=chunk, speaker=self.speaker, sample_rate=self.SAMPLE_RATE)
+        text = normalize_ru(prepare_for_speech(text, stress="plus"))
+        for chunk in split_sentences(text, self.MAX_CHARS):
+            # put_accent / put_yo: silero сам расставит ударения и ё там, где их нет в тексте
+            audio = self._model.apply_tts(
+                text=chunk, speaker=self.speaker, sample_rate=self.SAMPLE_RATE, put_accent=True, put_yo=True
+            )
             sd.play(audio.numpy(), self.SAMPLE_RATE)
             sd.wait()
 

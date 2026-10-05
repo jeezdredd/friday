@@ -130,18 +130,35 @@ def wake_loop(agent: Agent) -> None:
             print()
 
 
+def say_test(text: str) -> None:
+    from friday.config import settings
+    from friday.voice.speech_text import prepare_for_speech
+    from friday.voice.tts import create_speaker
+
+    speaker = create_speaker()
+    stress = {"ElevenLabs": settings.elevenlabs_stress, "Silero": "plus"}.get(type(speaker).__name__, "none")
+    print(f"Движок: {type(speaker).__name__}")
+    print(f"В синтезатор уйдёт: {prepare_for_speech(text, stress=stress)}")
+    speaker.speak(text)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="friday")
     parser.add_argument("--voice", action="store_true", help='голосовой режим с wake word "Пятница"')
     parser.add_argument("--ptt", action="store_true", help="голосовой режим push-to-talk (Enter)")
     parser.add_argument("--speak", action="store_true", help="озвучивать ответы в текстовом режиме")
     parser.add_argument("--tools", action="store_true", help="список инструментов")
+    parser.add_argument("--say", metavar="TEXT", help="озвучить текст без LLM, чтобы проверить произношение")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
 
     logging.basicConfig(
         level=logging.INFO if args.verbose else logging.WARNING, format="%(levelname)s %(name)s: %(message)s"
     )
+
+    if args.say:
+        say_test(args.say)
+        return
 
     if args.tools:
         for t in load_all().all():

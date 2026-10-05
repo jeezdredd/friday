@@ -123,7 +123,9 @@ All settings are read from environment variables or `.env`. Full list with defau
 | `FOLLOWUP_SECONDS` | `4` | Follow-up window, `0` disables |
 | `TTS_ENGINE` | `say` | `elevenlabs`, `silero` or `say` |
 | `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` | | ElevenLabs credentials and voice |
-| `ELEVENLABS_MODEL` | `eleven_flash_v2_5` | Lower latency; `eleven_multilingual_v2` for quality |
+| `ELEVENLABS_MODEL` | `eleven_multilingual_v2` | Best Russian prosody; `eleven_flash_v2_5` for lower latency |
+| `ELEVENLABS_STABILITY` / `_SIMILARITY` / `_STYLE` / `_SPEED` | `0.5` / `0.75` / `0` / `1.0` | Voice settings |
+| `ELEVENLABS_STRESS` | `acute` | How dictionary stress marks are passed: `acute` or `none` |
 
 ## Integrations
 
@@ -146,6 +148,29 @@ python -m friday.voice_setup --voice-id <id>    # set a known voice directly
 ```
 
 On paid plans the script generates candidates from a text description via Voice Design, plays them and saves the selected one to the account. Voice creation through the API is not available on the free plan; in that case the script lists the account's voices (female first), plays samples (`p N`), synthesizes a Russian test phrase (`t N`, consumes quota) and stores the choice. Either way, `ELEVENLABS_VOICE_ID` and `TTS_ENGINE=elevenlabs` are written to `.env`. Cloning a real person's voice without consent is not supported.
+
+### Speech text and pronunciation
+
+Responses pass through `friday/voice/speech_text.py` before synthesis:
+
+1. Pronunciation dictionary: English names to Cyrillic, abbreviations expanded, stress fixes. Stress is written with `+` before the stressed vowel (`зам+ок`) and rendered per engine: combining acute accent for ElevenLabs, `+` for Silero, stripped for `say`.
+2. Punctuation normalization: dashes and parentheses become comma pauses, quotes and markdown are removed, every phrase gets terminal punctuation.
+
+The system prompt additionally requires `ё`, numbers as words in the correct case, and no abbreviations, because the model output is the main lever for prosody.
+
+User overrides in `~/.friday/pronunciations.json` (merged over the defaults):
+
+```json
+{"замок": "зам+ок", "Алматы": "Алмат+ы"}
+```
+
+Check the result without calling the LLM:
+
+```bash
+python -m friday --say "Включила HomePod, т.е. музыка играет"
+```
+
+Model choice matters more than settings: `eleven_multilingual_v2` handles Russian intonation and number declension noticeably better than `eleven_flash_v2_5`. `eleven_v3` is more expressive but [not recommended](https://help.elevenlabs.io/hc/en-us/articles/35869054119057-What-is-Eleven-v3) for conversational latency.
 
 ### Porcupine
 

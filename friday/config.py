@@ -70,7 +70,17 @@ class Settings:
     silero_speaker: str = field(default_factory=lambda: _env("SILERO_SPEAKER", "xenia"))
     elevenlabs_api_key: str = field(default_factory=lambda: _env("ELEVENLABS_API_KEY"))
     elevenlabs_voice_id: str = field(default_factory=lambda: _env("ELEVENLABS_VOICE_ID"))
-    elevenlabs_model: str = field(default_factory=lambda: _env("ELEVENLABS_MODEL", "eleven_flash_v2_5"))
+    # multilingual_v2: лучшая интонация и склонение чисел в русском; flash_v2_5: быстрее, но площе
+    elevenlabs_model: str = field(default_factory=lambda: _env("ELEVENLABS_MODEL", "eleven_multilingual_v2"))
+    # 0..1: ниже = живее и эмоциональнее, выше = ровнее и предсказуемее
+    elevenlabs_stability: float = field(default_factory=lambda: _float("ELEVENLABS_STABILITY", "0.5"))
+    elevenlabs_similarity: float = field(default_factory=lambda: _float("ELEVENLABS_SIMILARITY", "0.75"))
+    # 0..1: усиление манеры голоса, повышает задержку и нестабильность
+    elevenlabs_style: float = field(default_factory=lambda: _float("ELEVENLABS_STYLE", "0"))
+    elevenlabs_speed: float = field(default_factory=lambda: _float("ELEVENLABS_SPEED", "1.0"))
+    elevenlabs_speaker_boost: bool = field(default_factory=lambda: _env("ELEVENLABS_SPEAKER_BOOST", "1") == "1")
+    # acute: ударения из словаря передаются знаком ударения; none: не передавать
+    elevenlabs_stress: str = field(default_factory=lambda: _env("ELEVENLABS_STRESS", "acute"))
 
 
 settings = Settings()
