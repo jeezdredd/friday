@@ -1,0 +1,27 @@
+# Home Assistant + Matter Server.
+#
+# На macOS Docker Desktop не поддерживает network_mode: host полноценно,
+# а Matter работает через IPv6 multicast в локальной сети. Поэтому на маке
+# надёжнее ставить HA OS в виртуалку (UTM) или на отдельную Raspberry Pi.
+# Этот compose пригоден для Linux-хоста (Raspberry Pi, мини-ПК).
+
+services:
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    container_name: homeassistant
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./ha-config:/config
+    environment:
+      - TZ=${TZ:-UTC}
+
+  matter-server:
+    image: ghcr.io/home-assistant-libs/python-matter-server:stable
+    container_name: matter-server
+    network_mode: host
+    restart: unless-stopped
+    security_opt:
+      - apparmor=unconfined
+    volumes:
+      - ./ha-config/matter:/data
