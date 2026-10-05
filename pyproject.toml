@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Personal voice AI assistant in the spirit of JARVIS and FRIDAY, with pluggable tools"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "Proprietary. All rights reserved." }
 dependencies = [
     "anthropic>=0.40",
     "httpx>=0.27",

@@ -3,7 +3,7 @@
 Personal AI assistant in the spirit of Tony Stark's JARVIS and FRIDAY: a voice-first right hand that searches the web, runs the Mac, keeps reminders and memory, recognizes its owner by voice, and controls the smart home when one is connected. Wake word, speech recognition and speaker identification run locally; reasoning is delegated to Claude via tool calling.
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
-![License](https://img.shields.io/badge/license-MIT-green)
+![License](https://img.shields.io/badge/license-proprietary-red)
 ![Platform](https://img.shields.io/badge/platform-macOS-lightgrey)
 
 ## Features
@@ -356,7 +356,19 @@ Tests do not require network, audio hardware or API keys: network access is stub
 
 ## Roadmap
 
-- [x] Streaming TTS playback
+Done:
+
+- [x] Two-stage wake word with Whisper verification
+- [x] Streaming TTS playback over a persistent audio output
+- [x] Filler phrases and quick replies to mask and cut latency
+- [x] Reminders and timers with recurrence
+- [x] Web search
+- [x] Mac control and Shortcuts
+- [x] Owner voice identification
+- [x] JARVIS / FRIDAY / EDITH persona
+
+Next:
+
 - [ ] Sentence-level streaming from LLM to TTS
 - [ ] Scheduled proactive briefings
 - [ ] Run as a launchd service so reminders fire without an open terminal
@@ -367,4 +379,6 @@ Tests do not require network, audio hardware or API keys: network access is stub
 
 ## License
 
-[MIT](LICENSE)
+Copyright (c) 2026 jeezdredd. All rights reserved.
+
+The source is published for viewing and evaluation only. Using, running, copying, modifying or distributing this software, in whole or in part, requires prior written permission. See [LICENSE](LICENSE).
