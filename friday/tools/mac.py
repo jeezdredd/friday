@@ -49,16 +49,21 @@ def get_volume() -> dict[str, Any]:
 @mac_tool(filler="")
 def set_brightness(
     level: Annotated[int | None, "Яркость встроенного дисплея 0-100"] = None,
-    change: Annotated[Literal["up", "down"] | None, "Ярче или темнее на пару шагов"] = None,
-) -> str:
-    """Яркость встроенного дисплея мака. Внешние мониторы так не управляются."""
+    change: Annotated[int | None, "Изменить на столько пунктов: +15 ярче, -15 темнее"] = None,
+) -> dict[str, Any]:
+    """Яркость встроенного дисплея мака. Возвращает реальную яркость после изменения:
+    подтверждай пользователю именно её. Для "ярче/темнее" без числа используй change ±15."""
     if level is not None:
-        macos.set_brightness(level)
-        return f"Яркость около {level}%"
+        return {"brightness_pct": macos.set_brightness(level)}
     if change is not None:
-        macos.change_brightness(2 if change == "up" else -2)
-        return "Ярче" if change == "up" else "Темнее"
+        return {"brightness_pct": macos.change_brightness(change)}
     raise ValueError("Укажи level или change")
+
+
+@mac_tool(filler="")
+def get_brightness() -> dict[str, Any]:
+    """Текущая яркость встроенного дисплея в процентах."""
+    return {"brightness_pct": macos.get_brightness()}
 
 
 @mac_tool(filler="")

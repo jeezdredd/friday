@@ -195,7 +195,7 @@ Model choice matters more than settings. The default is `eleven_v4_turbo`, which
 | Ask | Tool |
 |---|---|
 | "громче", "тише", "громкость на тридцать", "выключи звук" | `set_volume` |
-| "яркость на максимум", "сделай темнее" | `set_brightness` |
+| "яркость на максимум", "сделай темнее", "какая яркость" | `set_brightness`, `get_brightness` |
 | "открой телеграм", "закрой сафари", "что у меня открыто" | `open_app`, `quit_app`, `list_running_apps` |
 | "открой ютуб" | `open_url` |
 | "включи тёмную тему" | `set_dark_mode` |
@@ -208,11 +208,11 @@ Implementation notes:
 - Only built-in utilities (`osascript`, `open`, `pmset`, `shortcuts`); arguments are passed as lists without a shell, AppleScript strings are escaped, scripts go through stdin.
 - App names are resolved against installed `.app` bundles: exact, aliases (`vscode`), prefix, substring, acronym and typo tolerant matching. Ambiguous names return candidates instead of guessing.
 - Volume applies to the current output device, including AirPlay to HomePod.
-- Brightness uses the brightness keys (16 steps, built-in display only). If the [`brightness`](https://github.com/nriley/brightness) CLI is installed, it is used for exact levels.
+- Brightness uses the private DisplayServices framework via `ctypes` (the approach used by MonitorControl): no permissions, works on Apple Silicon, where emulated brightness keys silently do nothing. After every change the value is read back; a mismatch is reported as an error instead of a false confirmation. Built-in display (and Apple displays) only; third-party external monitors need DDC and are not supported yet.
 - Apps are closed with a regular quit, so unsaved work triggers the app's own save dialog.
 - Shortcuts expose everything macOS has no API for: Focus modes, HomeKit scenes, custom automations.
 
-macOS asks for permissions on first use, for the app that runs Friday (Terminal or PyCharm): **Automation** (System Events, controlled apps) and **Accessibility** (brightness keys, screen lock). Errors from missing permissions are reported with the exact settings path.
+macOS asks for permissions on first use, for the app that runs Friday (Terminal or PyCharm): **Automation** (System Events, controlled apps) and **Accessibility** (screen lock). Errors from missing permissions are reported with the exact settings path.
 
 ### Web search
 

@@ -47,12 +47,87 @@ def test_quote_escapes():
     assert macos.quote('a "b" \\ c') == '"a \\"b\\" \\\\ c"'
 
 
-def test_brightness_script_steps():
-    script = macos.brightness_script(50)
-    assert f"repeat {macos.BRIGHTNESS_STEPS} times" in script
-    assert "repeat 8 times" in script
-    assert "repeat 0 times" in macos.brightness_script(0)
-    assert "repeat 16 times\n        key code 144" in macos.brightness_script(150)  # обрезается до 100
+class _Fn:
+    """Функция из C-библиотеки: можно выставлять argtypes/restype, как у ctypes."""
+
+    def __init__(self, impl):
+        self.impl = impl
+
+    def __call__(self, *args):
+        return self.impl(*args)
+
+
+class FakeDisplays:
+    """CoreGraphics + DisplayServices: дисплей 1 внешний, 2 встроенный."""
+
+    def __init__(self, builtin=True, applies=True):
+        self.levels = {1: -1.0, 2: 0.45}
+        self.applies = applies  # False: вызов "успешен", но яркость не меняется (как key code на M-чипах)
+        self.CGMainDisplayID = _Fn(lambda: 1)
+        self.CGGetOnlineDisplayList = _Fn(self._list)
+        self.CGDisplayIsBuiltin = _Fn(lambda d: int(builtin and d == 2))
+        self.DisplayServicesGetBrightness = _Fn(self._get)
+        self.DisplayServicesSetBrightness = _Fn(self._set)
+
+    def _list(self, max_n, ids, count_ref):
+        ids[0], ids[1] = 1, 2
+        count_ref._obj.value = 2
+        return 0
+
+    def _get(self, display, value_ref):
+        if self.levels[display] < 0:
+            return 1  # внешний монитор: ошибка
+        value_ref._obj.value = self.levels[display]
+        return 0
+
+    def _set(self, display, level):
+        if self.levels[display] < 0:
+            return 1
+        if self.applies:
+            self.levels[display] = level
+        return 0
+
+
+@pytest.fixture
+def displays(monkeypatch):
+    def make(**kwargs):
+        fake = FakeDisplays(**kwargs)
+        monkeypatch.setattr(macos, "_display", macos.DisplayBrightness(cg=fake, ds=fake))
+        return fake
+
+    return make
+
+
+def test_brightness_targets_builtin_and_reads_back(displays):
+    fake = displays()
+    assert macos.get_brightness() == 45
+    assert macos.set_brightness(100) == 100
+    assert fake.levels[2] == pytest.approx(1.0)
+    assert fake.levels[1] == -1.0  # внешний не трогали
+
+
+def test_brightness_clamped_and_relative(displays):
+    displays()
+    assert macos.set_brightness(150) == 100
+    assert macos.change_brightness(-30) == 70
+
+
+def test_brightness_not_applied_is_reported(displays):
+    displays(applies=False)
+    with pytest.raises(macos.MacError, match="сейчас 45%"):
+        macos.set_brightness(100)
+
+
+def test_brightness_external_only(displays):
+    displays(builtin=False)
+    with pytest.raises(macos.MacError, match="внешний монитор"):
+        macos.get_brightness()
+
+
+def test_brightness_tool_reports_actual_value(displays):
+    displays()
+    assert mac_tools.set_brightness(level=80) == {"brightness_pct": 80}
+    assert mac_tools.get_brightness() == {"brightness_pct": 80}
 
 
 def test_open_url_only_http():

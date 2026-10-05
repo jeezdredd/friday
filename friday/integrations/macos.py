@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import difflib
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -28,10 +27,6 @@ APP_DIRS = (
     Path("/System/Applications/Utilities"),
     Path.home() / "Applications",
 )
-
-BRIGHTNESS_STEPS = 16  # столько шагов у клавиш яркости на встроенном дисплее
-KEY_BRIGHTNESS_UP = 144
-KEY_BRIGHTNESS_DOWN = 145
 
 
 class MacError(ToolError):
@@ -119,35 +114,95 @@ def set_muted(muted: bool) -> None:
 
 
 # ---------- яркость ----------
+#
+# Эмуляция клавиш яркости (key code 144/145) на маках с Apple Silicon не работает,
+# а утилита brightness там молча ничего не делает. Надёжный способ: системный фреймворк
+# DisplayServices, через него яркость меняют MonitorControl и подобные утилиты.
+# Он приватный, но стабилен много версий macOS и не требует разрешений.
+# Работает для встроенного дисплея (и Apple Studio Display / Pro Display XDR).
+
+CORE_GRAPHICS = "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics"
+DISPLAY_SERVICES = "/System/Library/PrivateFrameworks/DisplayServices.framework/DisplayServices"
+BRIGHTNESS_TOLERANCE = 0.03  # насколько прочитанное значение может отличаться от заданного
 
 
-def brightness_script(level_pct: int) -> str:
-    """Сначала в ноль, потом нужное число шагов вверх: так выходит предсказуемо без чтения текущей."""
-    steps = round(max(0, min(100, level_pct)) / 100 * BRIGHTNESS_STEPS)
-    return (
-        'tell application "System Events"\n'
-        f"    repeat {BRIGHTNESS_STEPS} times\n        key code {KEY_BRIGHTNESS_DOWN}\n    end repeat\n"
-        f"    repeat {steps} times\n        key code {KEY_BRIGHTNESS_UP}\n    end repeat\n"
-        "end tell"
-    )
+class DisplayBrightness:
+    """Яркость дисплея через DisplayServices. cg и ds можно подменить в тестах."""
+
+    def __init__(self, cg=None, ds=None):
+        import ctypes
+
+        self._ctypes = ctypes
+        self.cg = cg or ctypes.CDLL(CORE_GRAPHICS)
+        self.ds = ds or ctypes.CDLL(DISPLAY_SERVICES)
+        u32, f32 = ctypes.c_uint32, ctypes.c_float
+        self.cg.CGMainDisplayID.restype = u32
+        self.cg.CGGetOnlineDisplayList.argtypes = [u32, ctypes.POINTER(u32), ctypes.POINTER(u32)]
+        self.cg.CGGetOnlineDisplayList.restype = ctypes.c_int32
+        self.cg.CGDisplayIsBuiltin.argtypes = [u32]
+        self.cg.CGDisplayIsBuiltin.restype = u32
+        self.ds.DisplayServicesGetBrightness.argtypes = [u32, ctypes.POINTER(f32)]
+        self.ds.DisplayServicesGetBrightness.restype = ctypes.c_int
+        self.ds.DisplayServicesSetBrightness.argtypes = [u32, f32]
+        self.ds.DisplayServicesSetBrightness.restype = ctypes.c_int
+
+    def displays(self) -> list[int]:
+        ct = self._ctypes
+        ids = (ct.c_uint32 * 16)()
+        count = ct.c_uint32(0)
+        if self.cg.CGGetOnlineDisplayList(16, ids, ct.byref(count)) != 0:
+            return [self.cg.CGMainDisplayID()]
+        return list(ids[: count.value])
+
+    def target(self) -> int:
+        """Встроенный дисплей, если он есть, иначе главный."""
+        displays = self.displays()
+        builtin = [d for d in displays if self.cg.CGDisplayIsBuiltin(d)]
+        return builtin[0] if builtin else self.cg.CGMainDisplayID()
+
+    def get(self, display: int | None = None) -> float:
+        value = self._ctypes.c_float(-1.0)
+        display = self.target() if display is None else display
+        if self.ds.DisplayServicesGetBrightness(display, self._ctypes.byref(value)) != 0 or value.value < 0:
+            raise MacError("Этот дисплей не даёт управлять яркостью программно (обычно это внешний монитор)")
+        return float(value.value)
+
+    def set(self, level: float, display: int | None = None) -> float:
+        """Ставит яркость 0..1 и возвращает прочитанное обратно значение."""
+        display = self.target() if display is None else display
+        level = max(0.0, min(1.0, level))
+        if self.ds.DisplayServicesSetBrightness(display, level) != 0:
+            raise MacError("Не получилось изменить яркость этого дисплея")
+        actual = self.get(display)
+        if abs(actual - level) > BRIGHTNESS_TOLERANCE:
+            raise MacError(f"Яркость не изменилась как нужно: сейчас {round(actual * 100)}%")
+        return actual
 
 
-def brightness_step_script(steps: int) -> str:
-    key = KEY_BRIGHTNESS_UP if steps > 0 else KEY_BRIGHTNESS_DOWN
-    return f'tell application "System Events"\n    repeat {abs(steps)} times\n        key code {key}\n    end repeat\nend tell'
+_display: DisplayBrightness | None = None
 
 
-def set_brightness(level_pct: int) -> None:
-    # Утилита brightness (brew install brightness) точнее, если установлена
-    if shutil.which("brightness"):
-        run(["brightness", f"{max(0, min(100, level_pct)) / 100:.2f}"])
-    else:
-        osascript(brightness_script(level_pct), timeout=20)
+def _brightness() -> DisplayBrightness:
+    global _display
+    if _display is None:
+        try:
+            _display = DisplayBrightness()
+        except OSError as exc:
+            raise MacError("Управление яркостью недоступно на этом маке") from exc
+    return _display
 
 
-def change_brightness(steps: int) -> None:
-    if steps:
-        osascript(brightness_step_script(steps), timeout=20)
+def get_brightness() -> int:
+    return round(_brightness().get() * 100)
+
+
+def set_brightness(level_pct: int) -> int:
+    """Возвращает реальную яркость после изменения, в процентах."""
+    return round(_brightness().set(level_pct / 100) * 100)
+
+
+def change_brightness(delta_pct: int) -> int:
+    return set_brightness(get_brightness() + delta_pct)
 
 
 # ---------- приложения ----------
