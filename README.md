@@ -1,105 +1,159 @@
 # Friday
 
-Личный голосовой ассистент для дома в духе Джарвиса и Пятницы.
-Мозг на Claude с tool calling, умный дом через Home Assistant, wake word "Пятница", голос через ElevenLabs или локально.
+Self-hosted voice assistant for a smart home. Wake word detection and speech recognition run locally; reasoning is delegated to Claude via tool calling; device control goes through Home Assistant.
 
-Главная идея: ассистент расширяется обычными Python-функциями. Написал функцию с декоратором `@tool`, перезапустил, Пятница умеет новое.
+![Python](https://img.shields.io/badge/python-3.11%2B-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Platform](https://img.shields.io/badge/platform-macOS-lightgrey)
 
-## Архитектура
+## Features
 
-```
-микрофон -> Vosk: услышал "пятница"? -> запись до паузы -> Whisper -> это обращение? -> Agent (Claude + tools) -> TTS -> HomePod
-                                                                                          |
-                                                          tools/home.py   -> Home Assistant REST -> Matter лампа
-                                                          tools/system.py -> время, погода, местоположение
-                                                          tools/memory.py -> ~/.friday/memory.json
-                                                          tools/<твой_модуль>.py
-```
+- Two-stage wake word (Vosk keyword spotting + Whisper verification), Porcupine as an alternative backend
+- Local STT with faster-whisper; audio never leaves the machine
+- LLM agent loop with tool calling, bounded rounds and history trimming that preserves `tool_use` / `tool_result` pairs
+- Tool plugins: a typed Python function with `@tool` becomes an LLM tool, JSON Schema is derived from type hints
+- Home Assistant integration over REST (Matter devices via HA multi-admin)
+- Pluggable TTS: ElevenLabs, Silero (local), macOS `say`, with automatic fallback
+- Home location resolved once by IP and cached; timezone derived from it
+- Persistent user facts injected into the system prompt
 
-```
-friday/
-  agent.py              цикл диалога и вызова инструментов
-  prompts.py            системный промпт (характер и правила Пятницы)
-  config.py             настройки из .env
-  location.py           автоопределение дома по IP с кешем
-  voice_setup.py        создание голоса Пятницы в ElevenLabs
-  tools/
-    registry.py         декоратор @tool, автогенерация JSON-схемы
-    home.py             лампы, датчики
-    system.py           время, погода, местоположение
-    memory.py           долговременная память
-  integrations/
-    homeassistant.py    клиент REST API Home Assistant
-  voice/
-    audio.py            общий поток с микрофона
-    wakeword.py         детекторы wake word (Vosk, Porcupine)
-    listener.py         ожидание обращения и запись фразы до паузы
-    recorder.py         push-to-talk запись
-    stt.py              распознавание речи
-    tts.py              синтез речи (ElevenLabs, Silero, say)
+## Architecture
+
+```mermaid
+flowchart LR
+    MIC[Microphone<br/>16 kHz mono] --> KWS[Vosk / Porcupine<br/>keyword spotting]
+    KWS -->|trigger| EP[Endpointer<br/>adaptive noise floor]
+    EP --> STT[faster-whisper]
+    STT --> VER{Addressed?}
+    VER -->|no| MIC
+    VER -->|yes| AGENT[Agent loop<br/>Claude + tools]
+    AGENT <--> TOOLS[Tool registry]
+    TOOLS --> HA[Home Assistant REST]
+    TOOLS --> WX[Open-Meteo]
+    TOOLS --> MEM[(Local memory)]
+    AGENT --> TTS[TTS engine] --> OUT[Speaker / AirPlay]
 ```
 
-## Быстрый старт
+### Request lifecycle
+
+1. `MicStream` delivers 32 ms frames into a queue; a 2 s ring buffer is kept as pre-roll.
+2. The keyword spotter emits a trigger on the exact token `пятница`.
+3. `Endpointer` records until 0.9 s of silence, using a threshold derived from the running noise floor.
+4. Whisper transcribes pre-roll + phrase. The command is accepted only if the wake word appears within the first three tokens (`split_wake_command`). This rejects false triggers such as "в пятницу пойдём в кино".
+5. The agent calls Claude with the tool schemas; tool calls are executed and fed back until a final text response or `MAX_TOOL_ROUNDS`.
+6. The response is synthesized and played. The microphone queue is flushed to discard self-echo, then a follow-up window (`FOLLOWUP_SECONDS`) accepts the next utterance without the wake word.
+
+### Components
+
+| Module | Responsibility |
+|---|---|
+| `friday/agent.py` | Conversation state, tool-calling loop, system prompt assembly |
+| `friday/prompts.py` | Persona and behavioral rules |
+| `friday/tools/registry.py` | `@tool` decorator, schema generation, safe execution |
+| `friday/tools/*.py` | Tool implementations, auto-discovered at startup |
+| `friday/integrations/homeassistant.py` | Home Assistant REST client |
+| `friday/location.py` | IP geolocation with on-disk cache and env override |
+| `friday/voice/audio.py` | Shared microphone stream |
+| `friday/voice/wakeword.py` | Keyword spotting backends |
+| `friday/voice/listener.py` | Wake wait, endpointing, wake word verification |
+| `friday/voice/stt.py` | Transcription and hallucination filtering |
+| `friday/voice/tts.py` | TTS backends and text normalization |
+| `friday/voice_setup.py` | Provisioning the ElevenLabs voice |
+
+## Requirements
+
+- macOS on Apple Silicon or Intel (Linux works for everything except `say` and `afplay`)
+- Python 3.11+
+- Anthropic API key
+- Optional: Home Assistant instance, ElevenLabs API key, Picovoice access key
+
+## Installation
 
 ```bash
 git clone https://github.com/jeezdredd/friday.git
 cd friday
-brew install portaudio
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[voice,dev]"
-cp .env.example .env   # заполни ANTHROPIC_API_KEY и ELEVENLABS_API_KEY
-
-python -m friday.voice_setup   # один раз: создать голос Пятницы
-python -m friday --tools       # какие инструменты доступны
-python -m friday               # текстовый чат
-python -m friday --speak       # текстовый чат с озвучкой
-python -m friday --voice       # голосом: "Пятница, включи свет"
-python -m friday --ptt         # голосом без wake word: Enter говорить, Enter стоп
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install -U pip
+python -m pip install -e ".[voice,dev]"
+cp .env.example .env
 ```
 
-Чтобы ответы звучали из HomePod, выбери его устройством вывода звука на маке. При первом запуске `--voice` скачается модель Vosk (~45 МБ) и Whisper.
+Optional extras:
 
-## Местоположение
+| Extra | Installs | Needed for |
+|---|---|---|
+| `voice` | numpy, sounddevice, faster-whisper, vosk | Any voice mode |
+| `silero` | torch, num2words | `TTS_ENGINE=silero` |
+| `porcupine` | pvporcupine | `WAKE_ENGINE=porcupine` |
+| `dev` | pytest, ruff, num2words | Development |
 
-Город и координаты дома определяются по IP при первом запуске и кешируются в `~/.friday/location.json`. Оттуда же берётся таймзона. Пятница знает, где дом, и по умолчанию отвечает про погоду и время там.
+The Vosk model (~45 MB) and the Whisper model are downloaded on first use.
 
-Если IP показывает не тот город (VPN), задай `HOME_LAT`, `HOME_LON`, `HOME_CITY` в `.env`. Определить заново: `rm ~/.friday/location.json`.
+## Usage
 
-## Wake word
+```bash
+python -m friday            # text REPL
+python -m friday --speak    # text REPL, responses are spoken
+python -m friday --voice    # wake word mode
+python -m friday --ptt      # push-to-talk mode (Enter to start/stop)
+python -m friday --tools    # list registered tools
+python -m friday -v ...     # INFO logging, including tool calls and false triggers
+```
 
-Работает в два этапа, чтобы не срабатывать на всё подряд:
+REPL commands: `/reset` clears the conversation, `exit` quits.
 
-1. Vosk (офлайн, без регистрации) постоянно слушает и ждёт точное слово "пятница".
-2. После срабатывания фраза записывается до паузы, Whisper её расшифровывает, и команда выполняется, только если "Пятница" стоит в начале как обращение. "В пятницу пойдём в кино" будет проигнорировано.
+## Configuration
 
-Можно сказать на одном дыхании ("Пятница, какая погода?") или с паузой: на "Пятница" она ответит "Да?" и будет ждать команду. После ответа ещё 4 секунды можно продолжать разговор без повторного обращения (`FOLLOWUP_SECONDS`).
+All settings are read from environment variables or `.env`. Full list with defaults: [`.env.example`](.env.example).
 
-Для максимальной точности есть Porcupine: создай слово "Пятница" (язык Russian) в [Picovoice Console](https://console.picovoice.ai/), скачай `.ppn` и `porcupine_params_ru.pv`, пропиши пути и ключ в `.env`, `WAKE_ENGINE=porcupine`, `pip install -e ".[porcupine]"`.
+| Variable | Default | Description |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | | Required |
+| `FRIDAY_MODEL` | `claude-sonnet-5-5` | Model ID |
+| `FRIDAY_MAX_HISTORY` | `30` | Messages kept in context |
+| `FRIDAY_DATA_DIR` | `~/.friday` | Local state (memory, caches, models) |
+| `FRIDAY_TIMEZONE` | from location | IANA timezone override |
+| `HOME_LAT`, `HOME_LON`, `HOME_CITY` | from IP | Location override |
+| `HA_URL`, `HA_TOKEN` | `http://localhost:8123` | Home Assistant endpoint and long-lived token |
+| `FRIDAY_DEFAULT_LIGHT` | | Entity used when none is specified |
+| `WHISPER_MODEL` | `small` | `tiny` / `base` / `small` / `medium` / `large-v3` |
+| `WAKE_ENGINE` | `vosk` | `vosk` or `porcupine` |
+| `SILENCE_SECONDS` | `0.9` | Pause that ends a phrase |
+| `FOLLOWUP_SECONDS` | `4` | Follow-up window, `0` disables |
+| `TTS_ENGINE` | `say` | `elevenlabs`, `silero` or `say` |
+| `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` | | ElevenLabs credentials and voice |
+| `ELEVENLABS_MODEL` | `eleven_flash_v2_5` | Lower latency; `eleven_multilingual_v2` for quality |
 
-## Голос
+## Integrations
 
-| `TTS_ENGINE` | Что это |
-|---|---|
-| `elevenlabs` | Лучшее качество. Голос создаётся командой `python -m friday.voice_setup` |
-| `silero` | Локально и бесплатно, русские голоса xenia, baya, kseniya. `pip install -e ".[silero]"` |
-| `say` | Системный голос macOS, работает сразу |
+### Home Assistant and Matter
 
-`voice_setup` генерирует несколько вариантов голоса по описанию характера (Voice Design), проигрывает их, ты выбираешь лучший, голос сохраняется в твоём аккаунте ElevenLabs, а его ID записывается в `.env`. Своё описание: `python -m friday.voice_setup --description "..."`. Голос именно актрисы из фильма не клонируется: правила ElevenLabs запрещают клонировать человека без его согласия.
+HomeKit has no public API outside native Apple apps, so devices are accessed through Home Assistant. Matter multi-admin lets a device stay paired with Apple Home while also being controlled by HA.
 
-## Home Assistant и Matter-лампа
+1. Run Home Assistant. On macOS use HA OS in a VM (UTM) or a separate host; Docker Desktop on macOS does not provide the host networking Matter requires. `docker-compose.yml` targets a Linux host.
+2. Add the Matter integration in HA.
+3. In Apple Home: device settings, *Turn On Pairing Mode*, copy the code.
+4. In HA: *Add device*, *Matter*, paste the code.
+5. Create a long-lived access token in the HA user profile and set `HA_TOKEN`.
 
-HomeKit API закрыт для Python, поэтому устройства идут через Home Assistant. Matter поддерживает multi-admin: лампа остаётся в Apple Home и одновременно добавляется в HA.
+### Voice provisioning
 
-1. Подними Home Assistant. На macOS проще всего HA OS в виртуалке [UTM](https://www.home-assistant.io/installation/macos) или на отдельной Raspberry Pi. Docker Desktop на маке плохо дружит с Matter из-за сетевого режима, `docker-compose.yml` в репо рассчитан на Linux-хост.
-2. В HA: Settings -> Devices & services -> Add integration -> Matter.
-3. В Apple Home: лампа -> настройки -> Turn On Pairing Mode, скопируй код.
-4. В HA: Add device -> Matter -> вставь код.
-5. Профиль пользователя в HA -> Security -> создай Long-lived access token, положи в `.env` как `HA_TOKEN`.
-6. Узнай entity_id лампы (`python -m friday`, спроси "какие у меня лампы") и пропиши в `FRIDAY_DEFAULT_LIGHT`.
+```bash
+python -m friday.voice_setup                    # design a voice; falls back to --pick on the free plan
+python -m friday.voice_setup --pick [--all]     # choose from voices available to the account
+python -m friday.voice_setup --voice-id <id>    # set a known voice directly
+```
 
-## Как добавить свою возможность
+On paid plans the script generates candidates from a text description via Voice Design, plays them and saves the selected one to the account. Voice creation through the API is not available on the free plan; in that case the script lists the account's voices (female first), plays samples (`p N`), synthesizes a Russian test phrase (`t N`, consumes quota) and stores the choice. Either way, `ELEVENLABS_VOICE_ID` and `TTS_ENGINE=elevenlabs` are written to `.env`. Cloning a real person's voice without consent is not supported.
 
-Создай файл в `friday/tools/`, например `friday/tools/music.py`:
+### Porcupine
+
+Train the keyword in [Picovoice Console](https://console.picovoice.ai/) (language: Russian), then set `WAKE_ENGINE=porcupine`, `PORCUPINE_ACCESS_KEY`, `PORCUPINE_KEYWORD_PATH` and `PORCUPINE_MODEL_PATH` (`porcupine_params_ru.pv`).
+
+## Extending
+
+A tool is a typed function with a docstring placed in any module under `friday/tools/`. Modules are imported automatically; names starting with `_` are skipped.
 
 ```python
 from typing import Annotated, Literal
@@ -109,41 +163,67 @@ from friday.tools import tool
 
 @tool
 def play_music(
-    query: Annotated[str, "Что включить: исполнитель, трек или плейлист"],
+    query: Annotated[str, "Artist, track or playlist"],
     source: Literal["apple_music", "spotify"] = "apple_music",
 ) -> str:
-    """Включить музыку."""
+    """Start music playback."""
     ...
-    return f"Играет {query}"
 ```
 
-Всё. Модуль подхватится автоматически, схема для LLM соберётся из type hints:
+Contract:
 
-- docstring обязателен, это описание инструмента для модели
-- `Annotated[T, "описание"]` описывает параметр
-- `Literal[...]` превращается в enum
-- параметры без значения по умолчанию становятся обязательными
-- исключения внутри инструмента не роняют ассистента, модель получит текст ошибки
-- модули с префиксом `_` игнорируются, удобно для черновиков
+- The docstring is the tool description sent to the model and is mandatory.
+- Supported annotations: `str`, `int`, `float`, `bool`, `Literal`, `list[T]`, `dict`, `T | None`, `Annotated[T, "description"]`.
+- Parameters without defaults are required.
+- Return `str` or any JSON-serializable value.
+- Exceptions are caught and returned to the model as `is_error` results; they do not crash the loop.
+- Tools with side effects that cannot be undone must be confirmed by the user; the system prompt enforces this, keep the tool description explicit about it.
 
-## Тесты
+New TTS backends implement `speak(text: str) -> None` and are registered in `create_speaker()`. New wake word backends implement `frame_samples`, `process(frame) -> bool` and `reset()`.
+
+## Data and privacy
+
+| Data | Destination |
+|---|---|
+| Raw audio | Never leaves the machine |
+| Transcribed requests, conversation history, tool results | Anthropic API |
+| Response text | ElevenLabs API (only with `TTS_ENGINE=elevenlabs`) |
+| Public IP | ipinfo.io or ipapi.co, once, then cached |
+| Home coordinates | Open-Meteo, on weather requests |
+| Device states and commands | Local Home Assistant |
+
+Local state in `FRIDAY_DATA_DIR`: `memory.json`, `location.json`, `models/`, `voice_previews/`. Secrets live only in `.env`, which is git-ignored.
+
+## Development
 
 ```bash
 pytest
 ruff check .
+ruff format .
 ```
 
-## Безопасность
+Tests do not require network, audio hardware or API keys: network access is stubbed in `tests/conftest.py`, the agent is tested against a fake client, and audio logic (`Endpointer`, wake word parsing, text normalization) is pure.
 
-- Все ключи и токены только в `.env`, он в `.gitignore`.
-- Память ассистента лежит в `~/.friday`, вне репозитория.
-- Инструменты, которые что-то меняют (замки, покупки, сообщения), лучше делать с подтверждением голосом.
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `pyenv: pip: command not found` | The venv is not active: `source .venv/bin/activate` |
+| `No module named 'encodings'` when creating the venv | Remove the broken `.venv` and recreate it |
+| No audio input | Grant microphone access to the terminal in System Settings, Privacy & Security |
+| Frequent false triggers | Run with `-v` to inspect them; consider `WAKE_ENGINE=porcupine` |
+| Phrases cut off | Increase `SILENCE_SECONDS` |
+| Wrong city | Set `HOME_LAT` / `HOME_LON` or delete `~/.friday/location.json` |
 
 ## Roadmap
 
-- [x] wake word "Пятница"
-- [x] голос через ElevenLabs и Silero
-- [x] автоопределение местоположения
-- [ ] потоковый TTS, чтобы начинать говорить до конца ответа
-- [ ] проактивность: утренний брифинг по расписанию
-- [ ] веб-панель со статусом и историей
+- [ ] Streaming TTS: start playback before the full response is generated
+- [ ] Streaming LLM responses
+- [ ] Scheduled proactive briefings
+- [ ] Confirmation flow for irreversible actions enforced in code, not only in the prompt
+- [ ] Web dashboard: status, history, memory management
+- [ ] CI pipeline
+
+## License
+
+[MIT](LICENSE)

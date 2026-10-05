@@ -28,6 +28,7 @@ porcupine = [
     "pvporcupine>=3.0",
 ]
 dev = [
+    "numpy>=1.26",
     "pytest>=8",
     "ruff>=0.5",
     "num2words>=0.5.13",
