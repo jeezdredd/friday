@@ -73,6 +73,7 @@ class Agent:
         self.on_tool_call = on_tool_call
         self.on_tool_start = on_tool_start
         self._web_search_enabled = settings.web_search
+        self._location_mode = web_search.load_location_mode()
 
     def reset(self) -> None:
         self.history.clear()
@@ -80,7 +81,7 @@ class Agent:
     def tools(self) -> list[dict[str, Any]]:
         tools = self.registry.schemas()
         if self._web_search_enabled:
-            definition = web_search.tool_definition()
+            definition = web_search.tool_definition(self._location_mode)
             if definition:
                 tools.append(definition)
         return tools
@@ -134,18 +135,31 @@ class Agent:
         return "Что-то я запуталась в действиях, давай попробуем ещё раз."
 
     def _call_model(self) -> Any:
-        try:
-            return self._request()
-        except BadRequestError as exc:
-            if self._web_search_enabled and web_search.is_disabled_error(exc):
-                log.warning(
-                    "Поиск в интернете недоступен для этого ключа (%s). Включи его в консоли Anthropic. "
-                    "Продолжаю без поиска.",
-                    exc,
-                )
-                self._web_search_enabled = False
+        """Запрос к модели с подстройкой поиска под ограничения API: неподдерживаемое
+        местоположение понижается до более грубого, выключенный поиск убирается."""
+        for _ in range(len(web_search.LocationMode.ORDER) + 1):
+            try:
                 return self._request()
-            raise
+            except BadRequestError as exc:
+                kind = web_search.classify_error(exc) if self._web_search_enabled else None
+                if kind == "location":
+                    lower = web_search.LocationMode.downgrade(self._location_mode)
+                    if lower is None:
+                        raise
+                    log.warning("Поиск не принимает местоположение (%s), пробую режим %s", _api_message(exc), lower)
+                    self._location_mode = lower
+                    web_search.save_location_mode(lower)
+                    continue
+                if kind == "disabled":
+                    log.warning(
+                        "Поиск в интернете выключен для этого ключа (%s). Включи его в консоли Anthropic. "
+                        "Продолжаю без поиска.",
+                        _api_message(exc),
+                    )
+                    self._web_search_enabled = False
+                    continue
+                raise
+        return self._request()
 
     def _request(self) -> Any:
         kwargs = {
@@ -174,6 +188,13 @@ class Agent:
             self.history.pop(0)
             while self.history and not _is_plain_user(self.history[0]):
                 self.history.pop(0)
+
+
+def _api_message(exc: Exception) -> str:
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        return str(body.get("error", {}).get("message", exc))
+    return str(exc)
 
 
 def _log_llm_timing(round_no: int, started: float, response: Any) -> None:

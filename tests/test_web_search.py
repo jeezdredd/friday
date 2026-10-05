@@ -176,3 +176,56 @@ def test_compact_turn_keeps_client_tool_pairs():
     assert out[1]["content"] == [{"type": "tool_use", "id": "t1", "name": "set_light", "input": {"on": True}}]
     assert out[2] == turn[2]
     assert out[3]["content"] == [{"type": "text", "text": "Готово."}]
+
+
+def test_unsupported_country_drops_country_and_keeps_search(setup):
+    error = {
+        "type": "error",
+        "error": {
+            "type": "invalid_request_error",
+            "message": "tools.13.web_search_20260318: Country code KZ is not supported.",
+        },
+    }
+    agent, api, started = setup(
+        (400, error), (200, message([SEARCH, RESULT, text("Около пятисот тенге.")], "end_turn"))
+    )
+    assert agent.ask("курс доллара?") == "Около пятисот тенге."
+    assert agent._web_search_enabled
+    location = next(t for t in api.requests[1]["tools"] if t["name"] == "web_search")["user_location"]
+    assert "country" not in location and location["city"] == "Testcity"
+    assert started == ["web_search"]
+
+
+def test_location_mode_is_remembered_between_runs(setup):
+    error = {
+        "type": "error",
+        "error": {"type": "invalid_request_error", "message": "web_search: Country code KZ is not supported."},
+    }
+    agent, _, _ = setup((400, error), (200, message([text("Ок.")], "end_turn")))
+    agent.ask("тест")
+    fresh, api, _ = setup((200, message([text("Ок.")], "end_turn")))
+    fresh.ask("тест")
+    assert len(api.requests) == 1  # сразу без страны, без лишнего запроса с ошибкой
+    tool = next(t for t in api.requests[0]["tools"] if t["name"] == "web_search")
+    assert "country" not in tool["user_location"]
+
+
+def test_location_falls_back_to_none_if_still_rejected(setup):
+    error = {
+        "type": "error",
+        "error": {"type": "invalid_request_error", "message": "web_search: user_location is not supported."},
+    }
+    agent, api, _ = setup((400, error), (400, error), (200, message([text("Ок.")], "end_turn")))
+    assert agent.ask("тест") == "Ок."
+    tool = next(t for t in api.requests[2]["tools"] if t["name"] == "web_search")
+    assert "user_location" not in tool
+
+
+def test_unrelated_bad_request_is_raised(setup):
+    from anthropic import BadRequestError
+
+    error = {"type": "error", "error": {"type": "invalid_request_error", "message": "messages: roles must alternate"}}
+    agent, _, _ = setup((400, error))
+    with pytest.raises(BadRequestError):
+        agent.ask("тест")
+    assert agent._web_search_enabled
