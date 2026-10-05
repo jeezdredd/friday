@@ -53,7 +53,7 @@ flowchart LR
 | Module | Responsibility |
 |---|---|
 | `friday/agent.py` | Conversation state, tool-calling loop, system prompt assembly |
-| `friday/prompts.py` | Persona and behavioral rules |
+| `friday/prompts.py` | Persona (`PERSONA`, rendered with `FRIDAY_ADDRESS`) and behavioral rules (`RULES`) |
 | `friday/tools/registry.py` | `@tool` decorator, schema generation, safe execution |
 | `friday/tools/*.py` | Tool implementations, auto-discovered at startup |
 | `friday/integrations/homeassistant.py` | Home Assistant REST client |
@@ -127,6 +127,8 @@ All settings are read from environment variables or `.env`. Full list with defau
 | `FRIDAY_MODEL` | `claude-sonnet-5-5` | Model ID |
 | `FRIDAY_MAX_HISTORY` | `30` | Messages kept in context |
 | `FRIDAY_DATA_DIR` | `~/.friday` | Local state (memory, caches, models) |
+| `FRIDAY_ADDRESS` | `босс` | How Friday addresses the user: `босс`, `сэр`, a name |
+| `STARTUP_GREETING` | `1` | Spoken time-of-day greeting when `--voice` starts |
 | `FRIDAY_TIMEZONE` | from location | IANA timezone override |
 | `HOME_LAT`, `HOME_LON`, `HOME_CITY` | from IP | Location override |
 | `HA_URL`, `HA_TOKEN` | `http://localhost:8123` | Home Assistant endpoint and long-lived token |
@@ -167,6 +169,12 @@ python -m friday.voice_setup --voice-id <id>    # set a known voice directly
 ```
 
 On paid plans the script generates candidates from a text description via Voice Design, plays them and saves the selected one to the account. Voice creation through the API is not available on the free plan; in that case the script lists the account's voices (female first), plays samples (`p N`), synthesizes a Russian test phrase (`t N`, consumes quota) and stores the choice. Either way, `ELEVENLABS_VOICE_ID` and `TTS_ENGINE=elevenlabs` are written to `.env`. Cloning a real person's voice without consent is not supported.
+
+### Persona
+
+The character blends the three Stark assistants, described in original wording with no film quotes: JARVIS's composure, competence and dry understatement; FRIDAY's warmth and conversational partner tone; EDITH's terse, status-report precision and attention to risk. Concretely the prompt specifies: the form of address used in roughly one of three or four replies and always in greetings and warnings, terse onboard-AI confirmations, rare one-line humor that is never used on errors, bad news, health or money, short proactive observations (low battery, rain before going out, late hour) without lecturing, feminine grammatical gender, no flattery, and no pretending to be human.
+
+Filler phrases, acknowledgements ("Да, босс?", "Слушаю.") and the startup greeting follow the same style, rotate without immediate repeats and are pre-synthesized into the phrase cache. Edit `PERSONA` in `friday/prompts.py` to change the character; `RULES` holds the speech and tool rules that should stay intact.
 
 ### Speech text and pronunciation
 

@@ -149,6 +149,14 @@ def wake_loop(agent: Agent) -> None:
         engine = type(voice.speaker).__name__
         print(f"Синтез: {engine}. Вывод: {output_device_name() or '?'} (задержка {listener.latency:.1f} сек)")
         print(f'Слушаю. Скажи "{settings.wake_word.capitalize()}". Ctrl+C выход.')
+        if settings.startup_greeting:
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+
+            from friday.location import get_timezone
+
+            with listener.muted():
+                voice.greet(datetime.now(ZoneInfo(get_timezone())).hour)
         try:
             while True:
                 listener.wait_for_wake_word()
@@ -163,7 +171,7 @@ def wake_loop(agent: Agent) -> None:
                     continue
                 if not text:
                     # сказали только "Пятница": отзываемся и ждём саму команду
-                    voice.speak_short("Да?")
+                    voice.ack()
                     listener.after_speaking()
                     text = timed_transcribe(listener.record_phrase(with_preroll=False))
                     if not text:

@@ -25,6 +25,10 @@ class Settings:
 
     # Пользователь
     user_name: str = field(default_factory=lambda: _env("FRIDAY_USER_NAME"))
+    # Как Пятница обращается к пользователю: босс, сэр, по имени
+    address: str = field(default_factory=lambda: _env("FRIDAY_ADDRESS", "босс"))
+    # Приветствие голосом при запуске голосового режима
+    startup_greeting: bool = field(default_factory=lambda: _env("STARTUP_GREETING", "1") == "1")
     # Пусто = берётся из местоположения дома
     timezone: str = field(default_factory=lambda: _env("FRIDAY_TIMEZONE"))
     data_dir: Path = field(default_factory=lambda: Path(_env("FRIDAY_DATA_DIR", "~/.friday")).expanduser())
