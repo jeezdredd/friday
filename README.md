@@ -16,6 +16,7 @@ Self-hosted voice assistant for a smart home. Wake word detection and speech rec
 - Pluggable TTS: ElevenLabs, Silero (local), macOS `say`, with automatic fallback
 - Home location resolved once by IP and cached; timezone derived from it
 - Persistent user facts injected into the system prompt
+- macOS control: volume, brightness, apps, URLs, dark mode, screen, battery, Shortcuts
 - Web search via the Anthropic server-side tool, localized to the home location
 - Reminders and timers with recurrence, spoken on time, mirrored to macOS notifications and optionally Apple Reminders
 - Latency masking: per-tool filler phrases played from a local audio cache while tools and the model run
@@ -64,6 +65,8 @@ flowchart LR
 | `friday/voice/tts.py` | TTS backends and text normalization |
 | `friday/voice_setup.py` | Provisioning the ElevenLabs voice |
 | `friday/voice/output.py` | Single speech output: lock, filler phrases, phrase cache prefetch |
+| `friday/integrations/macos.py` | macOS control via osascript, open, pmset, shortcuts |
+| `friday/tools/mac.py` | Mac control tools, registered only on macOS |
 | `friday/web_search.py` | Web search tool definition, localization, history compaction |
 | `friday/reminders.py` | Reminder storage (SQLite), time parsing, recurrence |
 | `friday/scheduler.py` | Background thread that announces due reminders |
@@ -185,6 +188,30 @@ python -m friday --say "Включила HomePod, т.е. музыка играе
 ```
 
 Model choice matters more than settings. The default is `eleven_v4_turbo`, which ElevenLabs positions for real-time assistants. If it is not available on the plan, the client falls back to `eleven_multilingual_v2` at runtime and retries without `language_code` if a model rejects it. `eleven_flash_v2_5` has the lowest latency but flatter Russian intonation.
+
+### Mac control
+
+| Ask | Tool |
+|---|---|
+| "громче", "тише", "громкость на тридцать", "выключи звук" | `set_volume` |
+| "яркость на максимум", "сделай темнее" | `set_brightness` |
+| "открой телеграм", "закрой сафари", "что у меня открыто" | `open_app`, `quit_app`, `list_running_apps` |
+| "открой ютуб" | `open_url` |
+| "включи тёмную тему" | `set_dark_mode` |
+| "заблокируй мак", "погаси экран" | `screen_action` |
+| "сколько заряда" | `get_battery` |
+| "включи не беспокоить", "режим кино" | `run_shortcut`, `list_shortcuts` |
+
+Implementation notes:
+
+- Only built-in utilities (`osascript`, `open`, `pmset`, `shortcuts`); arguments are passed as lists without a shell, AppleScript strings are escaped, scripts go through stdin.
+- App names are resolved against installed `.app` bundles: exact, aliases (`vscode`), prefix, substring, acronym and typo tolerant matching. Ambiguous names return candidates instead of guessing.
+- Volume applies to the current output device, including AirPlay to HomePod.
+- Brightness uses the brightness keys (16 steps, built-in display only). If the [`brightness`](https://github.com/nriley/brightness) CLI is installed, it is used for exact levels.
+- Apps are closed with a regular quit, so unsaved work triggers the app's own save dialog.
+- Shortcuts expose everything macOS has no API for: Focus modes, HomeKit scenes, custom automations.
+
+macOS asks for permissions on first use, for the app that runs Friday (Terminal or PyCharm): **Automation** (System Events, controlled apps) and **Accessibility** (brightness keys, screen lock). Errors from missing permissions are reported with the exact settings path.
 
 ### Web search
 
