@@ -1,6 +1,6 @@
 # Friday
 
-Self-hosted voice assistant for a smart home. Wake word detection and speech recognition run locally; reasoning is delegated to Claude via tool calling; device control goes through Home Assistant.
+Personal AI assistant in the spirit of Tony Stark's JARVIS and FRIDAY: a voice-first right hand that searches the web, runs the Mac, keeps reminders and memory, recognizes its owner by voice, and controls the smart home when one is connected. Wake word, speech recognition and speaker identification run locally; reasoning is delegated to Claude via tool calling.
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -9,6 +9,7 @@ Self-hosted voice assistant for a smart home. Wake word detection and speech rec
 ## Features
 
 - Two-stage wake word (Vosk keyword spotting + Whisper verification), Porcupine as an alternative backend
+- Owner voice identification (WeSpeaker ONNX): enrollment on first run, greeting by name, guest-aware answers
 - Local STT with faster-whisper; audio never leaves the machine
 - LLM agent loop with tool calling, bounded rounds and history trimming that preserves `tool_use` / `tool_result` pairs
 - Tool plugins: a typed Python function with `@tool` becomes an LLM tool, JSON Schema is derived from type hints
@@ -61,6 +62,8 @@ flowchart LR
 | `friday/voice/audio.py` | Shared microphone stream |
 | `friday/voice/wakeword.py` | Keyword spotting backends |
 | `friday/voice/listener.py` | Wake wait, endpointing, wake word verification |
+| `friday/voice/speaker_id.py` | Owner voiceprint, verification, identity gate |
+| `friday/enroll.py` | Voice enrollment (`python -m friday.enroll`) |
 | `friday/voice/stt.py` | Transcription and hallucination filtering |
 | `friday/voice/tts.py` | TTS backends and text normalization |
 | `friday/voice_setup.py` | Provisioning the ElevenLabs voice |
@@ -142,6 +145,10 @@ All settings are read from environment variables or `.env`. Full list with defau
 | `REMINDER_CHECK_SECONDS` | `10` | Reminder scheduler polling interval |
 | `APPLE_REMINDERS_LIST` | | Mirror one-off reminders to this Apple Reminders list; empty disables |
 | `OUTPUT_LATENCY` | auto | Output delay in seconds; auto-detects AirPlay (2.0) vs local (0.3) |
+| `VOICE_ID` | `1` | Owner voice identification; enrollment runs on the first `--voice` start |
+| `VOICE_ID_POLICY` | `greet` | `greet`: answer guests without personal data; `owner_only`: ignore other voices |
+| `VOICE_ID_THRESHOLD` | `0` (auto) | Similarity threshold override; auto-calibrated at enrollment |
+| `GREET_AFTER_MINUTES` | `30` | Greet the owner by name again after this much silence |
 | `TTS_ENGINE` | `say` | `elevenlabs`, `silero` or `say` |
 | `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` | | ElevenLabs credentials and voice |
 | `ELEVENLABS_MODEL` | `eleven_v4_turbo` | Falls back to `eleven_multilingual_v2` if unavailable on the plan |
@@ -222,6 +229,21 @@ Implementation notes:
 - Shortcuts expose everything macOS has no API for: Focus modes, HomeKit scenes, custom automations.
 
 macOS asks for permissions on first use, for the app that runs Friday (Terminal or PyCharm): **Automation** (System Events, controlled apps) and **Accessibility** (screen lock). Errors from missing permissions are reported with the exact settings path.
+
+### Voice identification
+
+On the first `--voice` start Friday asks for a name and five phrases to read aloud, then stores a voiceprint. Re-run any time with `python -m friday.enroll`.
+
+- Model: WeSpeaker ResNet34 (ONNX, ~26 MB, downloaded on first use) via `sherpa-onnx`, 256-dim embeddings, cosine similarity; about 70 ms per check, no PyTorch.
+- Enrollment checks each phrase against the others and asks to repeat outliers (noise, coughs, another speaker). The threshold is calibrated from leave-one-out similarity of the owner's own phrases, clamped to 0.40-0.60.
+- Each command is verified on the full recorded phrase. Phrases under one second are treated as unknown rather than as a stranger.
+- Owner recognized after a pause (`GREET_AFTER_MINUTES`): "Пятница" alone gets "Приветствую, <имя>. Чем могу помочь?"; a full command gets the greeting folded into the answer, with no extra latency.
+- The model receives who is speaking. For an unrecognized voice under the default `greet` policy it answers politely but does not disclose the owner's reminders, memory or plans, does not use the owner's name, and does not perform irreversible actions. `owner_only` ignores other voices entirely.
+- The voiceprint is biometric data: stored locally in `~/.friday/voiceprint.json` with `0600` permissions, never sent anywhere.
+
+Voice identification is a convenience, not authentication: a recording or a cloned voice can pass it. Do not gate locks, payments or other security-sensitive actions on it.
+
+Sanity check performed during development with synthetic speakers (enrollment on one Piper voice, verification against it and three others): owner phrases scored 0.86-0.92, other speakers 0.43-0.65, all 9 decisions correct. Real microphones vary more; run with `-v` to see scores and set `VOICE_ID_THRESHOLD` if needed.
 
 ### Web search
 
@@ -307,6 +329,7 @@ New TTS backends implement `speak(text: str) -> None` and are registered in `cre
 | Public IP | ipinfo.io or ipapi.co, once, then cached |
 | Home coordinates | Open-Meteo, on weather requests |
 | Device states and commands | Local Home Assistant |
+| Voiceprint (biometric) | Local only, `~/.friday/voiceprint.json` |
 
 Local state in `FRIDAY_DATA_DIR`: `memory.json`, `location.json`, `models/`, `voice_previews/`. Secrets live only in `.env`, which is git-ignored.
 

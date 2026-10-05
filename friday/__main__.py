@@ -56,12 +56,12 @@ def _start_reminders(announce):
     return ReminderScheduler(announce).start()
 
 
-def _reply(agent: Agent, voice, text: str) -> str:
+def _reply(agent: Agent, voice, text: str, speaker_note: str | None = None) -> str:
     print(f"Ты: {text}")
     started = time.monotonic()
     if voice:
         voice.begin_request()
-    answer = agent.ask(text)
+    answer = agent.ask(text, speaker_note=speaker_note)
     log.info("Ответ агента за %.2f сек", time.monotonic() - started)
     print(f"Пятница: {answer}")
     if voice:
@@ -117,6 +117,32 @@ def ptt_loop(agent: Agent) -> None:
         _reply(agent, voice, text)
 
 
+def _identity_gate(voice):
+    """Голосовая идентификация: при первом запуске знакомимся, дальше узнаём владельца."""
+    from friday.config import settings
+    from friday.voice.speaker_id import IdentityGate, load_speaker_id, load_voiceprint
+
+    if not settings.voice_id:
+        return IdentityGate(None)
+    if load_voiceprint() is None:
+        from friday.enroll import run_enrollment
+
+        print("\nПервый запуск: давай познакомимся, чтобы я узнавала тебя по голосу.")
+        print("Пропустить можно через VOICE_ID=0 в .env.\n")
+        if not run_enrollment(speak=voice.speak):
+            print("Продолжаю без голосовой идентификации. Повторить: python -m friday.enroll")
+            return IdentityGate(None)
+    speaker_id = load_speaker_id()
+    if speaker_id is None:
+        return IdentityGate(None)
+    print(f"Голосовая идентификация: {speaker_id.voiceprint.name}, порог {speaker_id.voiceprint.threshold:.2f}")
+    return IdentityGate(speaker_id, settings.voice_id_policy, settings.greet_after_minutes)
+
+
+def greeting_for(name: str) -> str:
+    return f"Приветствую, {name}. Чем могу помочь?"
+
+
 def wake_loop(agent: Agent) -> None:
     import numpy as np
 
@@ -127,15 +153,29 @@ def wake_loop(agent: Agent) -> None:
     from friday.voice.wakeword import create_detector
 
     voice = _make_voice(agent)
+    gate = _identity_gate(voice)
+    owner = gate.speaker_id.voiceprint.name if gate.enabled else ""
+    if owner:
+        voice.prefetch_async(extra=[greeting_for(owner)])
     print("Загружаю модели...")
     detector = create_detector()
     transcribe(np.zeros(16_000, dtype=np.float32))  # прогрев whisper
+    if gate.enabled:
+        gate.identify(np.zeros(16_000, dtype=np.float32))  # прогрев модели голоса
 
     def timed_transcribe(audio) -> str:
         started = time.monotonic()
         text = transcribe(audio)
         log.info("Распознавание: %.2f сек", time.monotonic() - started)
         return text
+
+    def note_for(identity, greet: bool) -> str | None:
+        note = gate.context_note(identity)
+        if greet and identity.known:
+            note = (
+                note or ""
+            ) + f" Это первое обращение за сессию: начни ответ с короткого приветствия по имени, {identity.name}."
+        return note
 
     with MicStream(frame_samples=detector.frame_samples) as mic:
         listener = Listener(mic, detector)
@@ -162,22 +202,42 @@ def wake_loop(agent: Agent) -> None:
                 listener.wait_for_wake_word()
                 listener.chime()
                 print("(услышала обращение)")
-                heard = timed_transcribe(listener.record_phrase())
+                audio = listener.record_phrase()
+                heard = timed_transcribe(audio)
                 addressed, text = split_wake_command(heard)
                 if not addressed:
                     # детектор услышал похожее слово, но Whisper не подтвердил обращение
                     log.info("Ложное срабатывание: %r", heard)
                     listener.reset()
                     continue
+
+                identity = gate.identify(audio)
+                if not gate.allowed(identity):
+                    log.info("Голос не владельца, игнорирую (VOICE_ID_POLICY=owner_only)")
+                    listener.reset()
+                    continue
+                greet = gate.should_greet(identity)
+
                 if not text:
                     # сказали только "Пятница": отзываемся и ждём саму команду
-                    voice.ack()
+                    if greet:
+                        voice.speak_short(greeting_for(identity.name))
+                        greet = False  # уже поздоровались, в ответе повторять не нужно
+                    else:
+                        voice.ack()
                     listener.after_speaking()
-                    text = timed_transcribe(listener.record_phrase(with_preroll=False))
+                    audio = listener.record_phrase(with_preroll=False)
+                    text = timed_transcribe(audio)
                     if not text:
                         continue
+                    second = gate.identify(audio)
+                    if second.verification and second.verification.reliable:
+                        identity = second
+                    if not gate.allowed(identity):
+                        listener.reset()
+                        continue
 
-                answer = _reply(agent, voice, text)
+                answer = _reply(agent, voice, text, note_for(identity, greet))
                 listener.after_speaking()
 
                 # окно продолжения: можно ответить без повторного "Пятница"
@@ -189,7 +249,12 @@ def wake_loop(agent: Agent) -> None:
                     if is_self_echo(text, answer):
                         log.info("Пропускаю эхо собственного ответа: %r", text)
                         continue
-                    answer = _reply(agent, voice, text)
+                    identity = gate.identify(audio)
+                    if not gate.allowed(identity):
+                        log.info("Продолжение чужим голосом, игнорирую")
+                        break
+                    gate.should_greet(identity)  # обновляем время последнего контакта
+                    answer = _reply(agent, voice, text, note_for(identity, greet=False))
                     listener.after_speaking()
         except KeyboardInterrupt:
             print()

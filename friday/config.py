@@ -79,6 +79,15 @@ class Settings:
     # Задержка звука на выходе, сек. Пусто = авто: ~2 сек для HomePod/AirPlay, иначе 0.3
     output_latency: str = field(default_factory=lambda: _env("OUTPUT_LATENCY"))
 
+    # Голосовая идентификация владельца
+    voice_id: bool = field(default_factory=lambda: _env("VOICE_ID", "1") == "1")
+    # greet: чужим голосам тоже отвечать, но без личных данных; owner_only: чужих игнорировать
+    voice_id_policy: str = field(default_factory=lambda: _env("VOICE_ID_POLICY", "greet"))
+    # 0 = порог калибруется автоматически при знакомстве
+    voice_id_threshold: float = field(default_factory=lambda: _float("VOICE_ID_THRESHOLD", "0"))
+    # Через сколько минут тишины снова поприветствовать по имени
+    greet_after_minutes: float = field(default_factory=lambda: _float("GREET_AFTER_MINUTES", "30"))
+
     # Синтез речи
     tts_engine: str = field(default_factory=lambda: _env("TTS_ENGINE", "say"))  # say | silero | elevenlabs
     tts_voice: str = field(default_factory=lambda: _env("TTS_VOICE", "Milena"))

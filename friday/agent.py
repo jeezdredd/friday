@@ -25,13 +25,26 @@ MAX_TOOL_ROUNDS = 8
 TOOL_BLOCKS = frozenset({"tool_use", "server_tool_use"})
 
 
-def build_context(now: datetime | None = None) -> str:
-    """Динамическая часть промпта: время, дом, факты. Меняется, поэтому не кешируется."""
+def owner_name() -> str:
+    """Имя владельца: из настроек, иначе из отпечатка голоса, записанного при знакомстве."""
+    if settings.user_name:
+        return settings.user_name
+    from friday.voice.speaker_id import load_voiceprint
+
+    vp = load_voiceprint()
+    return vp.name if vp else ""
+
+
+def build_context(now: datetime | None = None, speaker_note: str | None = None) -> str:
+    """Динамическая часть промпта: время, дом, факты, кто говорит. Меняется, поэтому не кешируется."""
     tz = get_timezone()
     now = now or datetime.now(ZoneInfo(tz))
     context = [f"- Сейчас: {now.strftime('%Y-%m-%d %H:%M, %A')} ({tz})"]
-    if settings.user_name:
-        context.append(f"- Пользователь: {settings.user_name}")
+    name = owner_name()
+    if name:
+        context.append(f"- Владелец: {name}")
+    if speaker_note:
+        context.append(f"- Голос: {speaker_note}")
     loc = get_location()
     if loc and loc.describe():
         context.append(f'- Дом: {loc.describe()}. Погода, время и "здесь" по умолчанию относятся к этому месту.')
@@ -47,12 +60,12 @@ def build_system_prompt(now: datetime | None = None) -> str:
     return BASE_PROMPT + "\n\n" + build_context(now)
 
 
-def build_system_blocks(now: datetime | None = None) -> list[dict[str, Any]]:
+def build_system_blocks(now: datetime | None = None, speaker_note: str | None = None) -> list[dict[str, Any]]:
     """Статичная часть (инструменты + базовый промпт) кешируется на стороне API,
     точка кеша стоит до динамического контекста, чтобы смена минуты его не сбрасывала."""
     return [
         {"type": "text", "text": BASE_PROMPT, "cache_control": {"type": "ephemeral"}},
-        {"type": "text", "text": build_context(now)},
+        {"type": "text", "text": build_context(now, speaker_note)},
     ]
 
 
@@ -74,6 +87,7 @@ class Agent:
         self.on_tool_start = on_tool_start
         self._web_search_enabled = settings.web_search
         self._location_mode = web_search.load_location_mode()
+        self._speaker_note: str | None = None
 
     def reset(self) -> None:
         self.history.clear()
@@ -86,7 +100,9 @@ class Agent:
                 tools.append(definition)
         return tools
 
-    def ask(self, text: str) -> str:
+    def ask(self, text: str, speaker_note: str | None = None) -> str:
+        """speaker_note: кто говорит по результату голосовой идентификации (для этого хода)."""
+        self._speaker_note = speaker_note
         self.history.append({"role": "user", "content": text})
         self._trim_history()
         turn_start = len(self.history) - 1
@@ -186,7 +202,7 @@ class Agent:
         kwargs = {
             "model": settings.model,
             "max_tokens": settings.max_tokens,
-            "system": build_system_blocks(),
+            "system": build_system_blocks(speaker_note=self._speaker_note),
             "tools": self.tools(),
             "messages": self.history,
         }

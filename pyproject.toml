@@ -1,7 +1,7 @@
 [project]
 name = "friday"
 version = "0.1.0"
-description = "Personal home voice assistant (Jarvis/Friday style) with pluggable tools"
+description = "Personal voice AI assistant in the spirit of JARVIS and FRIDAY, with pluggable tools"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -17,6 +17,7 @@ voice = [
     "sounddevice>=0.4",
     "faster-whisper>=1.0",
     "vosk>=0.3.42",
+    "sherpa-onnx>=1.12",
 ]
 # локальный голос Silero (тянет torch, ~1 ГБ)
 silero = [
