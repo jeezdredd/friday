@@ -17,8 +17,37 @@ def _model():
     return WhisperModel(settings.whisper_model, device="cpu", compute_type="int8")
 
 
-def transcribe(audio: np.ndarray) -> str:
-    if audio.size < 1600:  # меньше 0.1 сек, это не речь
+def warmup() -> None:
+    """Загрузить модель заранее, чтобы первый ответ не тормозил."""
+    _model()
+
+
+# Whisper на тишине и шуме любит выдумывать титры
+_HALLUCINATIONS = (
+    "продолжение следует",
+    "субтитры",
+    "спасибо за просмотр",
+    "подписывайтесь на канал",
+    "редактор субтитров",
+)
+
+
+def clean_transcript(text: str) -> str:
+    """Обрезает пробелы и выкидывает типичные галлюцинации Whisper."""
+    text = text.strip()
+    low = text.lower()
+    return "" if any(h in low for h in _HALLUCINATIONS) else text
+
+
+def transcribe(audio: np.ndarray | None) -> str:
+    if audio is None or audio.size < 1600:  # меньше 0.1 сек, это не речь
         return ""
-    segments, _ = _model().transcribe(audio, language=settings.stt_language, vad_filter=True)
-    return " ".join(s.text.strip() for s in segments).strip()
+    segments, _ = _model().transcribe(
+        audio,
+        language=settings.stt_language,
+        vad_filter=True,
+        beam_size=1,
+        condition_on_previous_text=False,
+        initial_prompt="Пятница, включи свет. Какая погода?",
+    )
+    return clean_transcript(" ".join(s.text.strip() for s in segments))

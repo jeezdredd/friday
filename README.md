@@ -1,36 +1,42 @@
 # Friday
 
 Личный голосовой ассистент для дома в духе Джарвиса и Пятницы.
-Мозг на Claude с tool calling, умный дом через Home Assistant, голос локально (faster-whisper + `say` на macOS).
+Мозг на Claude с tool calling, умный дом через Home Assistant, wake word "Пятница", голос через ElevenLabs или локально.
 
 Главная идея: ассистент расширяется обычными Python-функциями. Написал функцию с декоратором `@tool`, перезапустил, Пятница умеет новое.
 
 ## Архитектура
 
 ```
-микрофон -> recorder -> faster-whisper (STT) -> Agent (Claude + tools) -> TTS -> колонка / HomePod
-                                                    |
-                                                    +-> tools/home.py   -> Home Assistant REST -> Matter лампа
-                                                    +-> tools/system.py -> время, погода
-                                                    +-> tools/memory.py -> ~/.friday/memory.json
-                                                    +-> tools/<твой_модуль>.py
+микрофон -> Vosk: услышал "пятница"? -> запись до паузы -> Whisper -> это обращение? -> Agent (Claude + tools) -> TTS -> HomePod
+                                                                                          |
+                                                          tools/home.py   -> Home Assistant REST -> Matter лампа
+                                                          tools/system.py -> время, погода, местоположение
+                                                          tools/memory.py -> ~/.friday/memory.json
+                                                          tools/<твой_модуль>.py
 ```
 
 ```
 friday/
   agent.py              цикл диалога и вызова инструментов
+  prompts.py            системный промпт (характер и правила Пятницы)
   config.py             настройки из .env
+  location.py           автоопределение дома по IP с кешем
+  voice_setup.py        создание голоса Пятницы в ElevenLabs
   tools/
     registry.py         декоратор @tool, автогенерация JSON-схемы
     home.py             лампы, датчики
-    system.py           время, погода
+    system.py           время, погода, местоположение
     memory.py           долговременная память
   integrations/
     homeassistant.py    клиент REST API Home Assistant
   voice/
+    audio.py            общий поток с микрофона
+    wakeword.py         детекторы wake word (Vosk, Porcupine)
+    listener.py         ожидание обращения и запись фразы до паузы
     recorder.py         push-to-talk запись
     stt.py              распознавание речи
-    tts.py              синтез речи
+    tts.py              синтез речи (ElevenLabs, Silero, say)
 ```
 
 ## Быстрый старт
@@ -38,18 +44,47 @@ friday/
 ```bash
 git clone https://github.com/jeezdredd/friday.git
 cd friday
+brew install portaudio
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[voice,dev]"
-cp .env.example .env   # заполни ANTHROPIC_API_KEY и остальное
+cp .env.example .env   # заполни ANTHROPIC_API_KEY и ELEVENLABS_API_KEY
 
-python -m friday --tools   # какие инструменты доступны
-python -m friday           # текстовый чат
-python -m friday --speak   # текстовый чат с озвучкой
-python -m friday --voice   # голосом: Enter говорить, Enter стоп
+python -m friday.voice_setup   # один раз: создать голос Пятницы
+python -m friday --tools       # какие инструменты доступны
+python -m friday               # текстовый чат
+python -m friday --speak       # текстовый чат с озвучкой
+python -m friday --voice       # голосом: "Пятница, включи свет"
+python -m friday --ptt         # голосом без wake word: Enter говорить, Enter стоп
 ```
 
-Для голоса на macOS нужен PortAudio: `brew install portaudio`.
-Чтобы ответы звучали из HomePod, выбери его устройством вывода звука на маке.
+Чтобы ответы звучали из HomePod, выбери его устройством вывода звука на маке. При первом запуске `--voice` скачается модель Vosk (~45 МБ) и Whisper.
+
+## Местоположение
+
+Город и координаты дома определяются по IP при первом запуске и кешируются в `~/.friday/location.json`. Оттуда же берётся таймзона. Пятница знает, где дом, и по умолчанию отвечает про погоду и время там.
+
+Если IP показывает не тот город (VPN), задай `HOME_LAT`, `HOME_LON`, `HOME_CITY` в `.env`. Определить заново: `rm ~/.friday/location.json`.
+
+## Wake word
+
+Работает в два этапа, чтобы не срабатывать на всё подряд:
+
+1. Vosk (офлайн, без регистрации) постоянно слушает и ждёт точное слово "пятница".
+2. После срабатывания фраза записывается до паузы, Whisper её расшифровывает, и команда выполняется, только если "Пятница" стоит в начале как обращение. "В пятницу пойдём в кино" будет проигнорировано.
+
+Можно сказать на одном дыхании ("Пятница, какая погода?") или с паузой: на "Пятница" она ответит "Да?" и будет ждать команду. После ответа ещё 4 секунды можно продолжать разговор без повторного обращения (`FOLLOWUP_SECONDS`).
+
+Для максимальной точности есть Porcupine: создай слово "Пятница" (язык Russian) в [Picovoice Console](https://console.picovoice.ai/), скачай `.ppn` и `porcupine_params_ru.pv`, пропиши пути и ключ в `.env`, `WAKE_ENGINE=porcupine`, `pip install -e ".[porcupine]"`.
+
+## Голос
+
+| `TTS_ENGINE` | Что это |
+|---|---|
+| `elevenlabs` | Лучшее качество. Голос создаётся командой `python -m friday.voice_setup` |
+| `silero` | Локально и бесплатно, русские голоса xenia, baya, kseniya. `pip install -e ".[silero]"` |
+| `say` | Системный голос macOS, работает сразу |
+
+`voice_setup` генерирует несколько вариантов голоса по описанию характера (Voice Design), проигрывает их, ты выбираешь лучший, голос сохраняется в твоём аккаунте ElevenLabs, а его ID записывается в `.env`. Своё описание: `python -m friday.voice_setup --description "..."`. Голос именно актрисы из фильма не клонируется: правила ElevenLabs запрещают клонировать человека без его согласия.
 
 ## Home Assistant и Matter-лампа
 
@@ -106,8 +141,9 @@ ruff check .
 
 ## Roadmap
 
-- [ ] wake word ("Пятница") через openWakeWord
+- [x] wake word "Пятница"
+- [x] голос через ElevenLabs и Silero
+- [x] автоопределение местоположения
 - [ ] потоковый TTS, чтобы начинать говорить до конца ответа
 - [ ] проактивность: утренний брифинг по расписанию
-- [ ] голос получше: Piper или ElevenLabs
 - [ ] веб-панель со статусом и историей

@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from anthropic import Anthropic
 
 from friday.config import settings
+from friday.location import get_location, get_timezone
+from friday.prompts import BASE_PROMPT
 from friday.tools import ToolRegistry, load_all
 from friday.tools.memory import load_facts
 
@@ -16,20 +20,21 @@ log = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = 8
 
-BASE_PROMPT = """Ты Пятница, личный голосовой ассистент в стиле ИИ из фильмов про Железного человека.
-Отвечаешь по-русски, коротко и по делу, с лёгкой иронией. Твои ответы озвучиваются голосом,
-поэтому никакого markdown, списков, эмодзи и длинных чисел: говори как человек.
-Если для ответа нужно действие или свежие данные, используй инструменты, не выдумывай.
-Если инструмент вернул ошибку, коротко скажи, что пошло не так."""
 
-
-def build_system_prompt() -> str:
-    parts = [BASE_PROMPT]
+def build_system_prompt(now: datetime | None = None) -> str:
+    tz = get_timezone()
+    now = now or datetime.now(ZoneInfo(tz))
+    context = [f"- Сейчас: {now.strftime('%Y-%m-%d %H:%M, %A')} ({tz})"]
     if settings.user_name:
-        parts.append(f"Пользователя зовут {settings.user_name}.")
+        context.append(f"- Пользователь: {settings.user_name}")
+    loc = get_location()
+    if loc and loc.describe():
+        context.append(f'- Дом: {loc.describe()}. Погода, время и "здесь" по умолчанию относятся к этому месту.')
+
+    parts = [BASE_PROMPT, "# Контекст\n" + "\n".join(context)]
     facts = load_facts()
     if facts:
-        parts.append("Что ты знаешь о пользователе:\n" + "\n".join(f"- {f}" for f in facts))
+        parts.append("# Что ты знаешь о пользователе\n" + "\n".join(f"- {f}" for f in facts))
     return "\n\n".join(parts)
 
 

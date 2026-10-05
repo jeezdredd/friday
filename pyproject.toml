@@ -16,10 +16,21 @@ voice = [
     "numpy>=1.26",
     "sounddevice>=0.4",
     "faster-whisper>=1.0",
+    "vosk>=0.3.45",
+]
+# локальный голос Silero (тянет torch, ~1 ГБ)
+silero = [
+    "torch>=2.2",
+    "num2words>=0.5.13",
+]
+# альтернативный wake word движок
+porcupine = [
+    "pvporcupine>=3.0",
 ]
 dev = [
     "pytest>=8",
     "ruff>=0.5",
+    "num2words>=0.5.13",
 ]
 
 [project.scripts]

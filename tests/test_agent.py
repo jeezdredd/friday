@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from friday.agent import Agent
+from friday.config import settings
 from friday.tools import ToolRegistry
 
 
@@ -46,8 +47,7 @@ def make_registry():
     return reg, state
 
 
-def test_tool_call_roundtrip(tmp_path, monkeypatch):
-    monkeypatch.setattr("friday.tools.memory.settings", type("S", (), {"data_dir": tmp_path})())
+def test_tool_call_roundtrip():
     reg, state = make_registry()
     client = FakeClient(
         [
@@ -70,7 +70,7 @@ def test_tool_call_roundtrip(tmp_path, monkeypatch):
 def test_history_trim_keeps_tool_pairs(monkeypatch):
     reg, _ = make_registry()
     agent = Agent(client=FakeClient([]), registry=reg)
-    monkeypatch.setattr("friday.agent.settings", type("S", (), {"max_history": 3})())
+    monkeypatch.setattr(settings, "max_history", 3)
     agent.history = [
         {"role": "user", "content": "1"},
         {"role": "assistant", "content": [{"type": "tool_use"}]},

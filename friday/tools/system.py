@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import datetime
 from typing import Annotated, Any
 from zoneinfo import ZoneInfo
 
 import httpx
 
-from friday.config import settings
+from friday.location import get_location, get_timezone
 from friday.tools import tool
 
 _WEATHER_CODES = {
@@ -42,25 +43,36 @@ _WEATHER_CODES = {
 @tool
 def get_datetime() -> str:
     """Текущие дата, время и день недели."""
-    now = datetime.now(ZoneInfo(settings.timezone))
-    return now.strftime("%Y-%m-%d %H:%M, %A") + f" ({settings.timezone})"
+    tz = get_timezone()
+    now = datetime.now(ZoneInfo(tz))
+    return now.strftime("%Y-%m-%d %H:%M, %A") + f" ({tz})"
+
+
+@tool
+def get_home_location() -> dict[str, Any]:
+    """Где находится дом пользователя: город, страна, координаты, таймзона."""
+    loc = get_location()
+    if loc is None:
+        raise RuntimeError("Местоположение не определено: нет сети или задай HOME_LAT/HOME_LON в .env")
+    return asdict(loc)
 
 
 @tool
 def get_weather(
     days: Annotated[int, "Сколько дней прогноза вернуть, 1-7"] = 1,
 ) -> dict[str, Any]:
-    """Погода сейчас и прогноз на несколько дней для дома пользователя."""
-    if not (settings.weather_lat and settings.weather_lon):
-        raise ValueError("WEATHER_LAT/WEATHER_LON не заданы в .env")
+    """Погода дома сейчас и прогноз на несколько дней. Место определяется автоматически."""
+    loc = get_location()
+    if loc is None:
+        raise RuntimeError("Не знаю, где дом: нет сети или задай HOME_LAT/HOME_LON в .env")
     resp = httpx.get(
         "https://api.open-meteo.com/v1/forecast",
         params={
-            "latitude": settings.weather_lat,
-            "longitude": settings.weather_lon,
+            "latitude": loc.lat,
+            "longitude": loc.lon,
             "current": "temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m",
             "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code",
-            "timezone": settings.timezone,
+            "timezone": get_timezone(),
             "forecast_days": max(1, min(7, days)),
         },
         timeout=10,
