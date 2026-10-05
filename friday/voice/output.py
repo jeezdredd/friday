@@ -26,6 +26,8 @@ GENERIC_FILLERS = (
     "Дай секунду.",
 )
 SHORT_PHRASES = ("Да?",)
+# Фразы для инструментов, которых нет в реестре (серверные инструменты API)
+EXTRA_FILLERS = {"web_search": "Ищу в интернете."}
 
 
 class VoiceOutput:
@@ -57,6 +59,8 @@ class VoiceOutput:
         self._filler_used = False
 
     def filler_for(self, tool_name: str) -> str:
+        if tool_name in EXTRA_FILLERS:
+            return EXTRA_FILLERS[tool_name]
         tool = self.registry.get(tool_name) if self.registry else None
         if tool is not None and tool.filler is not None:
             return tool.filler
@@ -96,7 +100,7 @@ class VoiceOutput:
     # ---------- прогрев кеша ----------
 
     def all_phrases(self) -> list[str]:
-        phrases = list(GENERIC_FILLERS) + list(SHORT_PHRASES)
+        phrases = list(GENERIC_FILLERS) + list(SHORT_PHRASES) + list(EXTRA_FILLERS.values())
         if self.registry:
             phrases += [t.filler for t in self.registry.all() if t.filler]
         return list(dict.fromkeys(phrases))

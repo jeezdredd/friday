@@ -16,6 +16,7 @@ Self-hosted voice assistant for a smart home. Wake word detection and speech rec
 - Pluggable TTS: ElevenLabs, Silero (local), macOS `say`, with automatic fallback
 - Home location resolved once by IP and cached; timezone derived from it
 - Persistent user facts injected into the system prompt
+- Web search via the Anthropic server-side tool, localized to the home location
 - Reminders and timers with recurrence, spoken on time, mirrored to macOS notifications and optionally Apple Reminders
 - Latency masking: per-tool filler phrases played from a local audio cache while tools and the model run
 - Streaming TTS playback and prompt caching for the static part of the system prompt
@@ -63,6 +64,7 @@ flowchart LR
 | `friday/voice/tts.py` | TTS backends and text normalization |
 | `friday/voice_setup.py` | Provisioning the ElevenLabs voice |
 | `friday/voice/output.py` | Single speech output: lock, filler phrases, phrase cache prefetch |
+| `friday/web_search.py` | Web search tool definition, localization, history compaction |
 | `friday/reminders.py` | Reminder storage (SQLite), time parsing, recurrence |
 | `friday/scheduler.py` | Background thread that announces due reminders |
 | `friday/integrations/apple_reminders.py` | Optional mirror to Apple Reminders via AppleScript |
@@ -128,6 +130,8 @@ All settings are read from environment variables or `.env`. Full list with defau
 | `WAKE_ENGINE` | `vosk` | `vosk` or `porcupine` |
 | `SILENCE_SECONDS` | `0.9` | Pause that ends a phrase |
 | `FOLLOWUP_SECONDS` | `4` | Follow-up window, `0` disables |
+| `WEB_SEARCH` | `1` | Enable the server-side web search tool |
+| `WEB_SEARCH_MAX_USES` | `3` | Searches allowed per request |
 | `REMINDER_CHECK_SECONDS` | `10` | Reminder scheduler polling interval |
 | `APPLE_REMINDERS_LIST` | | Mirror one-off reminders to this Apple Reminders list; empty disables |
 | `OUTPUT_LATENCY` | auto | Output delay in seconds; auto-detects AirPlay (2.0) vs local (0.3) |
@@ -181,6 +185,16 @@ python -m friday --say "Включила HomePod, т.е. музыка играе
 ```
 
 Model choice matters more than settings. The default is `eleven_v4_turbo`, which ElevenLabs positions for real-time assistants. If it is not available on the plan, the client falls back to `eleven_multilingual_v2` at runtime and retries without `language_code` if a model rejects it. `eleven_flash_v2_5` has the lowest latency but flatter Russian intonation.
+
+### Web search
+
+Uses the [Anthropic web search tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool), executed server-side within the model request: no separate search API key, billed at $10 per 1,000 searches plus result tokens. It must be enabled for the organization in the Anthropic Console; if it is not, the agent logs a warning and continues without it.
+
+- Results are localized with `user_location` derived from the home location.
+- Dynamic filtering through code execution is disabled (`allowed_callers: ["direct"]`) to keep voice latency low.
+- The agent streams model responses to detect the start of a search and play "Ищу в интернете." immediately, since a server-side search completes inside a single request.
+- `pause_turn` is handled by resending the paused turn.
+- After each turn, search results and citations are removed from the history: they would otherwise be billed as input tokens on every subsequent request, and the voice assistant only needs what was said.
 
 ### Reminders and timers
 
@@ -245,6 +259,7 @@ New TTS backends implement `speak(text: str) -> None` and are registered in `cre
 | Raw audio | Never leaves the machine |
 | Transcribed requests, conversation history, tool results | Anthropic API |
 | Response text | ElevenLabs API (only with `TTS_ENGINE=elevenlabs`) |
+| Search queries, approximate home location | Anthropic web search (only with `WEB_SEARCH=1`) |
 | Public IP | ipinfo.io or ipapi.co, once, then cached |
 | Home coordinates | Open-Meteo, on weather requests |
 | Device states and commands | Local Home Assistant |

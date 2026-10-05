@@ -62,6 +62,11 @@ class Settings:
     start_timeout_seconds: float = field(default_factory=lambda: _float("START_TIMEOUT_SECONDS", "5"))
     followup_seconds: float = field(default_factory=lambda: _float("FOLLOWUP_SECONDS", "4"))
     chime: bool = field(default_factory=lambda: _env("CHIME", "1") == "1")
+    # Поиск в интернете (серверный инструмент Anthropic, отдельный ключ не нужен)
+    web_search: bool = field(default_factory=lambda: _env("WEB_SEARCH", "1") == "1")
+    web_search_max_uses: int = field(default_factory=lambda: int(_env("WEB_SEARCH_MAX_USES", "3")))
+    web_search_tool: str = field(default_factory=lambda: _env("WEB_SEARCH_TOOL", "web_search_20260318"))
+
     # Напоминания
     reminder_check_seconds: float = field(default_factory=lambda: _float("REMINDER_CHECK_SECONDS", "10"))
     # Имя списка в Apple «Напоминаниях» для дублирования (пусто = выключено)

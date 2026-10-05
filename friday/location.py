@@ -52,7 +52,7 @@ def _from_ipapi(client: httpx.Client) -> Location:
         float(d["longitude"]),
         d.get("city", ""),
         d.get("region", ""),
-        d.get("country_name", ""),
+        d.get("country_code", ""),
         d.get("timezone", ""),
     )
 

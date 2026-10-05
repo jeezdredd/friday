@@ -34,11 +34,15 @@ def _make_voice(agent: Agent):
     voice = VoiceOutput(create_speaker(), agent.registry)
     voice.prefetch_async()
 
-    def on_tool_call(name: str, args: dict) -> None:
-        _print_tool_call(name, args)
-        voice.on_tool_call(name, args)
+    # заполнитель запускается, как только модель начала вызывать инструмент (включая поиск)
+    previous = agent.on_tool_start
 
-    agent.on_tool_call = on_tool_call
+    def on_tool_start(name: str) -> None:
+        if previous:
+            previous(name)
+        voice.on_tool_call(name)
+
+    agent.on_tool_start = on_tool_start
     return voice
 
 
@@ -214,7 +218,11 @@ def main() -> None:
             print(f"{t.name}: {t.description.splitlines()[0]}")
         return
 
-    agent = Agent(on_tool_call=_print_tool_call)
+    def print_server_tool(name: str) -> None:
+        if name == "web_search":
+            print("  [tool] web_search")
+
+    agent = Agent(on_tool_call=_print_tool_call, on_tool_start=print_server_tool)
     if args.voice:
         wake_loop(agent)
     elif args.ptt:
