@@ -127,7 +127,7 @@ All settings are read from environment variables or `.env`. Full list with defau
 | `FRIDAY_MODEL` | `claude-sonnet-5-5` | Model ID |
 | `FRIDAY_MAX_HISTORY` | `30` | Messages kept in context |
 | `FRIDAY_DATA_DIR` | `~/.friday` | Local state (memory, caches, models) |
-| `FRIDAY_ADDRESS` | `босс` | How Friday addresses the user: `босс`, `сэр`, a name |
+| `FRIDAY_ADDRESS` | `сэр` | How Friday addresses the user: `сэр`, `босс`, a name |
 | `STARTUP_GREETING` | `1` | Spoken time-of-day greeting when `--voice` starts |
 | `FRIDAY_TIMEZONE` | from location | IANA timezone override |
 | `HOME_LAT`, `HOME_LON`, `HOME_CITY` | from IP | Location override |
@@ -174,7 +174,7 @@ On paid plans the script generates candidates from a text description via Voice 
 
 The character blends the three Stark assistants, described in original wording with no film quotes: JARVIS's composure, competence and dry understatement; FRIDAY's warmth and conversational partner tone; EDITH's terse, status-report precision and attention to risk. Concretely the prompt specifies: the form of address used in roughly one of three or four replies and always in greetings and warnings, terse onboard-AI confirmations, rare one-line humor that is never used on errors, bad news, health or money, short proactive observations (low battery, rain before going out, late hour) without lecturing, feminine grammatical gender, no flattery, and no pretending to be human.
 
-Filler phrases, acknowledgements ("Да, босс?", "Слушаю.") and the startup greeting follow the same style, rotate without immediate repeats and are pre-synthesized into the phrase cache. Edit `PERSONA` in `friday/prompts.py` to change the character; `RULES` holds the speech and tool rules that should stay intact.
+Filler phrases, acknowledgements ("Да, сэр?", "Слушаю.") and the startup greeting follow the same style, rotate without immediate repeats and are pre-synthesized into the phrase cache. Edit `PERSONA` in `friday/prompts.py` to change the character; `RULES` holds the speech and tool rules that should stay intact.
 
 ### Speech text and pronunciation
 
