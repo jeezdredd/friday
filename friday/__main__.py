@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import threading
 import time
 
 from friday.agent import Agent
@@ -32,6 +33,9 @@ def _make_voice(agent: Agent):
     from friday.voice.tts import create_speaker
 
     voice = VoiceOutput(create_speaker(), agent.registry)
+    if hasattr(voice.speaker, "warmup"):
+        # открываем аудиопоток к колонке сразу, а не на первом ответе
+        threading.Thread(target=voice.speaker.warmup, daemon=True).start()
     voice.prefetch_async()
 
     # заполнитель запускается, как только модель начала вызывать инструмент (включая поиск)

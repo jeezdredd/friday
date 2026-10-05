@@ -81,3 +81,87 @@ def test_history_trim_keeps_tool_pairs(monkeypatch):
     ]
     agent._trim_history()
     assert agent.history[0] == {"role": "user", "content": "2"}
+
+
+def _quick_registry(fail: bool = False):
+    reg = ToolRegistry()
+
+    def set_volume(level: int) -> str:
+        """Громкость."""
+        if fail:
+            raise ValueError("нет звука")
+        return "ok"
+
+    def get_weather() -> str:
+        """Погода."""
+        return "+20"
+
+    reg.register(set_volume, quick_reply=True)
+    reg.register(get_weather)
+    return reg
+
+
+def test_quick_reply_skips_second_round():
+    client = FakeClient(
+        [
+            Response(
+                [
+                    Block({"type": "text", "text": "Ставлю громкость на тридцать."}),
+                    Block({"type": "tool_use", "id": "t1", "name": "set_volume", "input": {"level": 30}}),
+                ],
+                "tool_use",
+            ),
+        ]
+    )
+    agent = Agent(client=client, registry=_quick_registry())
+    assert agent.ask("громкость на тридцать") == "Ставлю громкость на тридцать."
+    assert len(client.calls) == 1
+
+
+def test_quick_reply_not_used_on_error():
+    client = FakeClient(
+        [
+            Response(
+                [
+                    Block({"type": "text", "text": "Ставлю громкость."}),
+                    Block({"type": "tool_use", "id": "t1", "name": "set_volume", "input": {"level": 30}}),
+                ],
+                "tool_use",
+            ),
+            Response([Block({"type": "text", "text": "Не получилось, нет звука."})], "end_turn"),
+        ]
+    )
+    agent = Agent(client=client, registry=_quick_registry(fail=True))
+    assert agent.ask("громкость на тридцать") == "Не получилось, нет звука."
+    assert len(client.calls) == 2
+
+
+def test_quick_reply_not_used_for_data_tools():
+    client = FakeClient(
+        [
+            Response(
+                [
+                    Block({"type": "text", "text": "Сейчас посмотрю."}),
+                    Block({"type": "tool_use", "id": "t1", "name": "get_weather", "input": {}}),
+                ],
+                "tool_use",
+            ),
+            Response([Block({"type": "text", "text": "Двадцать градусов."})], "end_turn"),
+        ]
+    )
+    agent = Agent(client=client, registry=_quick_registry())
+    assert agent.ask("погода") == "Двадцать градусов."
+
+
+def test_quick_reply_needs_text():
+    client = FakeClient(
+        [
+            Response(
+                [Block({"type": "tool_use", "id": "t1", "name": "set_volume", "input": {"level": 30}})], "tool_use"
+            ),
+            Response([Block({"type": "text", "text": "Готово."})], "end_turn"),
+        ]
+    )
+    agent = Agent(client=client, registry=_quick_registry())
+    assert agent.ask("громкость на тридцать") == "Готово."
+    assert len(client.calls) == 2

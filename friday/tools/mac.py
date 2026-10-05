@@ -19,7 +19,7 @@ def mac_tool(**kwargs):
 # ---------- звук ----------
 
 
-@mac_tool(filler="")
+@mac_tool(filler="", quick_reply=True)
 def set_volume(
     level: Annotated[int | None, "Громкость 0-100"] = None,
     change: Annotated[int | None, "Изменить на столько пунктов: +10 громче, -10 тише"] = None,
@@ -46,7 +46,7 @@ def get_volume() -> dict[str, Any]:
 # ---------- экран ----------
 
 
-@mac_tool(filler="")
+@mac_tool(filler="", quick_reply=True)
 def set_brightness(
     level: Annotated[int | None, "Яркость встроенного дисплея 0-100"] = None,
     change: Annotated[int | None, "Изменить на столько пунктов: +15 ярче, -15 темнее"] = None,
@@ -66,13 +66,13 @@ def get_brightness() -> dict[str, Any]:
     return {"brightness_pct": macos.get_brightness()}
 
 
-@mac_tool(filler="")
+@mac_tool(filler="", quick_reply=True)
 def set_dark_mode(mode: Literal["on", "off", "toggle"] = "toggle") -> str:
     """Включить или выключить тёмную тему macOS."""
     return "Тёмная тема включена" if macos.set_dark_mode(mode) else "Светлая тема включена"
 
 
-@mac_tool(filler="")
+@mac_tool(filler="", quick_reply=True)
 def screen_action(action: Literal["sleep_display", "lock"]) -> str:
     """Погасить экран или заблокировать мак."""
     if action == "lock":
@@ -85,13 +85,13 @@ def screen_action(action: Literal["sleep_display", "lock"]) -> str:
 # ---------- приложения ----------
 
 
-@mac_tool(filler="")
+@mac_tool(filler="", quick_reply=True)
 def open_app(name: Annotated[str, "Название приложения по-английски, как в папке Программы: Safari, Telegram"]) -> str:
     """Открыть приложение на маке или переключиться на него, если уже открыто."""
     return f"Открыто: {macos.open_app(name)}"
 
 
-@mac_tool(filler="")
+@mac_tool(filler="", quick_reply=True)
 def quit_app(name: Annotated[str, "Название запущенного приложения"]) -> str:
     """Закрыть приложение. Если есть несохранённое, приложение само спросит, ничего не теряется."""
     return f"Закрыто: {macos.quit_app(name)}"
@@ -103,7 +103,7 @@ def list_running_apps() -> dict[str, Any]:
     return {"running": macos.running_apps(), "frontmost": macos.frontmost_app()}
 
 
-@mac_tool(filler="")
+@mac_tool(filler="", quick_reply=True)
 def open_url(url: Annotated[str, "Полная ссылка http(s)"]) -> str:
     """Открыть сайт в браузере по умолчанию: "открой ютуб" -> https://youtube.com."""
     macos.open_url(url)

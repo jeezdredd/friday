@@ -46,6 +46,9 @@ class Tool:
     # Показывать ли инструмент модели прямо сейчас. Например, инструменты умного дома
     # не нужны, пока не настроен Home Assistant: иначе модель будет пытаться ими пользоваться.
     available: Callable[[], bool] | None = None
+    # Простое действие: если модель написала подтверждение вместе с вызовом и инструмент
+    # отработал без ошибки, второй запрос к модели не нужен, подтверждение и есть ответ.
+    quick_reply: bool = False
 
     def is_available(self) -> bool:
         return self.available is None or bool(self.available())
@@ -74,6 +77,7 @@ class ToolRegistry:
         name: str | None = None,
         filler: str | None = None,
         available: Callable[[], bool] | None = None,
+        quick_reply: bool = False,
     ) -> Tool:
         tool_name = name or func.__name__
         if tool_name in self._tools:
@@ -81,7 +85,7 @@ class ToolRegistry:
         description = inspect.cleandoc(func.__doc__ or "").strip()
         if not description:
             raise ValueError(f"У инструмента {tool_name!r} нет docstring, LLM не поймёт, зачем он")
-        t = Tool(tool_name, description, func, build_schema(func), filler, available)
+        t = Tool(tool_name, description, func, build_schema(func), filler, available, quick_reply)
         self._tools[tool_name] = t
         return t
 
@@ -132,15 +136,17 @@ def tool(
     name: str | None = None,
     filler: str | None = None,
     available: Callable[[], bool] | None = None,
+    quick_reply: bool = False,
 ):
     """Декоратор: регистрирует функцию как инструмент ассистента.
 
     filler: фраза, которую Пятница скажет, пока инструмент выполняется.
     available: функция без аргументов; если вернула False, модель инструмент не видит.
+    quick_reply: простое действие, подтверждение модели можно озвучить без второго запроса.
     """
 
     def wrap(f: Callable[..., Any]) -> Callable[..., Any]:
-        registry.register(f, name=name, filler=filler, available=available)
+        registry.register(f, name=name, filler=filler, available=available, quick_reply=quick_reply)
         return f
 
     return wrap(func) if func is not None else wrap

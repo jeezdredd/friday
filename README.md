@@ -64,6 +64,7 @@ flowchart LR
 | `friday/voice/stt.py` | Transcription and hallucination filtering |
 | `friday/voice/tts.py` | TTS backends and text normalization |
 | `friday/voice_setup.py` | Provisioning the ElevenLabs voice |
+| `friday/voice/player.py` | Persistent PCM output stream shared by all TTS engines |
 | `friday/voice/output.py` | Single speech output: lock, filler phrases, phrase cache prefetch |
 | `friday/integrations/macos.py` | macOS control via osascript, open, pmset, shortcuts |
 | `friday/tools/mac.py` | Mac control tools, registered only on macOS |
@@ -244,6 +245,11 @@ Run with `-v` to see per-stage timings: speech recognition, each LLM round with 
 2. Output device: AirPlay adds about 2 s of buffering compared to the Mac speakers.
 3. `WHISPER_MODEL=base` speeds up recognition at some accuracy cost.
 4. Filler phrases do not reduce latency but remove the silence; per-tool phrases are set with `@tool(filler="...")`, `filler=""` disables them for fast tools.
+
+Built-in latency measures:
+
+- **Persistent audio output.** One output stream is opened at startup and kept for the whole session. Reopening a stream per phrase re-establishes the AirPlay session with the HomePod and waits for its network buffer on close, which cost 4-6 s per answer. End of speech is computed from the audio duration, not from closing the stream. The output device is fixed at startup; restart after switching outputs.
+- **Quick replies.** For simple actions (`@tool(quick_reply=True)`: volume, brightness, apps, lights, reminders, memory) the model writes a short confirmation in the same response as the tool call. If every called tool succeeds, that confirmation is spoken and the second model round is skipped. On any error, or for data tools, the normal second round runs so the model can answer from the result.
 
 ### Porcupine
 

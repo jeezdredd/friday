@@ -25,6 +25,8 @@ from typing import Protocol
 import httpx
 
 from friday.config import settings
+from friday.voice.player import get_player
+from friday.voice.player import warmup as warmup_player
 from friday.voice.speech_text import prepare_for_speech
 
 log = logging.getLogger(__name__)
@@ -128,27 +130,28 @@ class ElevenLabs:
 
     def speak(self, text: str) -> None:
         """Потоковое воспроизведение: звук начинает играть с первых байт ответа,
-        а не после синтеза всей фразы."""
+        а не после синтеза всей фразы. Поток вывода общий и постоянно открыт."""
         if not text:
             return
-        import sounddevice as sd
-
         started = time.monotonic()
         resp = self._open(text, stream=True)
+        timings: dict[str, float] = {}
+
+        def chunks():
+            for chunk in resp.iter_bytes():
+                if "first" not in timings:
+                    timings["first"] = time.monotonic() - started
+                    log.info("TTS первый звук через %.2f сек", timings["first"])
+                yield chunk
+
         try:
-            with sd.RawOutputStream(samplerate=self.SAMPLE_RATE, channels=1, dtype="int16") as out:
-                pending = b""
-                first = True
-                for chunk in resp.iter_bytes():
-                    if first:
-                        log.info("TTS первый звук через %.2f сек", time.monotonic() - started)
-                        first = False
-                    data = pending + chunk
-                    cut = len(data) - len(data) % 2  # int16 = 2 байта, не рвём сэмпл
-                    out.write(data[:cut])
-                    pending = data[cut:]
+            duration = get_player(self.SAMPLE_RATE).play_stream(chunks())
         finally:
             resp.close()
+        log.info("TTS %.2f сек звука, всего %.2f сек", duration, time.monotonic() - started)
+
+    def warmup(self) -> None:
+        warmup_player(self.SAMPLE_RATE)
 
     # ---------- кеш коротких фраз (заполнители, "Да?") ----------
 
@@ -190,12 +193,7 @@ class ElevenLabs:
                 return
 
     def speak_cached(self, text: str) -> None:
-        import numpy as np
-        import sounddevice as sd
-
-        audio = np.frombuffer(self.cached_audio(text), dtype=np.int16)
-        sd.play(audio, self.SAMPLE_RATE)
-        sd.wait()
+        get_player(self.SAMPLE_RATE).play(self.cached_audio(text))
 
 
 class Silero:
@@ -211,16 +209,18 @@ class Silero:
         )
 
     def speak(self, text: str) -> None:
-        import sounddevice as sd
-
         text = normalize_ru(prepare_for_speech(text, stress="plus"))
+        player = get_player(self.SAMPLE_RATE)
         for chunk in split_sentences(text, self.MAX_CHARS):
             # put_accent / put_yo: silero сам расставит ударения и ё там, где их нет в тексте
             audio = self._model.apply_tts(
                 text=chunk, speaker=self.speaker, sample_rate=self.SAMPLE_RATE, put_accent=True, put_yo=True
             )
-            sd.play(audio.numpy(), self.SAMPLE_RATE)
-            sd.wait()
+            pcm = (audio.clamp(-1, 1) * 32767).short().numpy().tobytes()
+            player.play(pcm)
+
+    def warmup(self) -> None:
+        warmup_player(self.SAMPLE_RATE)
 
 
 # ---------- текст для локальных движков ----------

@@ -132,7 +132,28 @@ class Agent:
                 )
             self.history.append({"role": "user", "content": tool_results})
 
+            quick = self._quick_reply(content, tool_results)
+            if quick:
+                log.info("Быстрый ответ без второго раунда: %s", quick)
+                return quick
+
         return "Что-то я запуталась в действиях, давай попробуем ещё раз."
+
+    def _quick_reply(self, content: list[dict[str, Any]], tool_results: list[dict[str, Any]]) -> str | None:
+        """Подтверждение, которое модель написала вместе с вызовом простых инструментов.
+        Годится как ответ, только если все вызванные инструменты простые и отработали без ошибок:
+        иначе нужен второй раунд, чтобы модель увидела результат и ответила по нему."""
+        text = _text_of(content)
+        tool_uses = [b for b in content if b.get("type") == "tool_use"]
+        if not text or not tool_uses or any(b.get("type") == "server_tool_use" for b in content):
+            return None
+        if any(r["is_error"] for r in tool_results):
+            return None
+        for block in tool_uses:
+            tool = self.registry.get(block["name"])
+            if tool is None or not tool.quick_reply:
+                return None
+        return text
 
     def _call_model(self) -> Any:
         """Запрос к модели с подстройкой поиска под ограничения API: неподдерживаемое

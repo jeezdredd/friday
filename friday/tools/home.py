@@ -51,7 +51,7 @@ def get_light_state(
     return _short_state(get_ha().state(_resolve_light(entity_id)))
 
 
-@home_tool(filler="")
+@home_tool(filler="", quick_reply=True)
 def set_light(
     on: Annotated[bool, "true = включить, false = выключить"],
     entity_id: Annotated[str | None, "entity_id лампы. Пусто = лампа по умолчанию"] = None,

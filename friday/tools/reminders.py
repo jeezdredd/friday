@@ -11,7 +11,7 @@ from friday.reminders import describe_when, get_store, parse_when, utcnow
 from friday.tools import tool
 
 
-@tool(filler="")
+@tool(filler="", quick_reply=True)
 def create_reminder(
     text: Annotated[str, "Что напомнить, коротко и по-русски, как это будет произнесено: 'выключить духовку'"],
     when: Annotated[str | None, "Точное локальное время дома в ISO, например 2026-10-05T18:30"] = None,
@@ -61,7 +61,7 @@ def list_reminders(
     ]
 
 
-@tool(filler="")
+@tool(filler="", quick_reply=True)
 def cancel_reminder(
     reminder_id: Annotated[int | None, "id напоминания из list_reminders"] = None,
     text_contains: Annotated[str | None, "Часть текста напоминания, если id неизвестен"] = None,
