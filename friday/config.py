@@ -85,6 +85,10 @@ class Settings:
     voice_id_policy: str = field(default_factory=lambda: _env("VOICE_ID_POLICY", "greet"))
     # 0 = порог калибруется автоматически при знакомстве
     voice_id_threshold: float = field(default_factory=lambda: _float("VOICE_ID_THRESHOLD", "0"))
+    # Голосовая проверка доступа при запуске --voice: сказать кодовое слово своим голосом
+    startup_auth: bool = field(default_factory=lambda: _env("STARTUP_AUTH", "1") == "1")
+    auth_phrase: str = field(default_factory=lambda: _env("AUTH_PHRASE", "подтверждаю"))
+    auth_attempts: int = field(default_factory=lambda: int(_env("AUTH_ATTEMPTS", "3")))
     # Через сколько минут тишины снова поприветствовать по имени
     greet_after_minutes: float = field(default_factory=lambda: _float("GREET_AFTER_MINUTES", "30"))
 

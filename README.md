@@ -63,6 +63,7 @@ flowchart LR
 | `friday/voice/wakeword.py` | Keyword spotting backends |
 | `friday/voice/listener.py` | Wake wait, endpointing, wake word verification |
 | `friday/voice/speaker_id.py` | Owner voiceprint, verification, identity gate |
+| `friday/voice/auth.py` | Startup voice access check |
 | `friday/enroll.py` | Voice enrollment (`python -m friday.enroll`) |
 | `friday/voice/stt.py` | Transcription and hallucination filtering |
 | `friday/voice/tts.py` | TTS backends and text normalization |
@@ -149,6 +150,9 @@ All settings are read from environment variables or `.env`. Full list with defau
 | `VOICE_ID_POLICY` | `greet` | `greet`: answer guests without personal data; `owner_only`: ignore other voices |
 | `VOICE_ID_THRESHOLD` | `0` (auto) | Similarity threshold override; auto-calibrated at enrollment |
 | `GREET_AFTER_MINUTES` | `30` | Greet the owner by name again after this much silence |
+| `STARTUP_AUTH` | `1` | Voice access check on `--voice` start |
+| `AUTH_PHRASE` | `подтверждаю` | Code word for the access check |
+| `AUTH_ATTEMPTS` | `3` | Attempts before "Доступ запрещён" and exit |
 | `TTS_ENGINE` | `say` | `elevenlabs`, `silero` or `say` |
 | `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` | | ElevenLabs credentials and voice |
 | `ELEVENLABS_MODEL` | `eleven_v4_turbo` | Falls back to `eleven_multilingual_v2` if unavailable on the plan |
@@ -240,6 +244,15 @@ On the first `--voice` start Friday asks for a name and five phrases to read alo
 - Owner recognized after a pause (`GREET_AFTER_MINUTES`): "Пятница" alone gets "Приветствую, <имя>. Чем могу помочь?"; a full command gets the greeting folded into the answer, with no extra latency.
 - The model receives who is speaking. For an unrecognized voice under the default `greet` policy it answers politely but does not disclose the owner's reminders, memory or plans, does not use the owner's name, and does not perform irreversible actions. `owner_only` ignores other voices entirely.
 - The voiceprint is biometric data: stored locally in `~/.friday/voiceprint.json` with `0600` permissions, never sent anywhere.
+
+#### Startup access check
+
+With `STARTUP_AUTH=1` (default) every `--voice` start begins with an access check: "Требуется голосовая идентификация. Скажи: подтверждаю." Access is granted only if both the code word (`AUTH_PHRASE`) and the voice match: "Личность подтверждена. Приветствую, <имя>. Чем могу помочь?". After `AUTH_ATTEMPTS` failures Friday says "Доступ запрещён." and exits.
+
+- The code word is recognized in two passes: with a Whisper prompt biased to the phrase (reliable on a single short word) and without it (Whisper may drop words matching the prompt). Fuzzy matching tolerates recognition errors; a negation ("не подтверждаю") is rejected.
+- Voice is checked on the short phrase itself; development tests showed 0.86-0.88 for the owner and 0.40-0.67 for other synthetic speakers on "подтверждаю".
+- Hints are specific: a correct word with a wrong voice gets "Голос не распознан", a wrong word gets the expected phrase.
+- After a successful check the time-of-day greeting is skipped and the owner is not greeted again on the first command.
 
 Voice identification is a convenience, not authentication: a recording or a cloned voice can pass it. Do not gate locks, payments or other security-sensitive actions on it.
 

@@ -39,7 +39,12 @@ def clean_transcript(text: str) -> str:
     return "" if any(h in low for h in _HALLUCINATIONS) else text
 
 
-def transcribe(audio: np.ndarray | None) -> str:
+DEFAULT_HINT = "Пятница, включи свет. Какая погода?"
+
+
+def transcribe(audio: np.ndarray | None, hint: str | None = None) -> str:
+    """hint: ожидаемые слова. Whisper смещается к ним, это сильно помогает на коротких
+    фразах без контекста, например на кодовом слове при проверке доступа."""
     if audio is None or audio.size < 1600:  # меньше 0.1 сек, это не речь
         return ""
     segments, _ = _model().transcribe(
@@ -48,6 +53,6 @@ def transcribe(audio: np.ndarray | None) -> str:
         vad_filter=True,
         beam_size=1,
         condition_on_previous_text=False,
-        initial_prompt="Пятница, включи свет. Какая погода?",
+        initial_prompt=hint or DEFAULT_HINT,
     )
     return clean_transcript(" ".join(s.text.strip() for s in segments))

@@ -239,6 +239,10 @@ class IdentityGate:
         пропускаем: иначе будет раздражать отказами на "Пятница" без команды."""
         return not (self.policy == "owner_only" and identity.stranger)
 
+    def mark_owner_contact(self, now: float | None = None) -> None:
+        """Владелец только что подтвердил личность: повторно приветствовать не нужно."""
+        self._last_owner_contact = time.monotonic() if now is None else now
+
     def should_greet(self, identity: Identity, now: float | None = None) -> bool:
         """Приветствие по имени при первом обращении в сессии или после долгого перерыва."""
         if not identity.known:

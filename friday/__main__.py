@@ -145,6 +145,41 @@ def _identity_gate(voice):
     return IdentityGate(speaker_id, settings.voice_id_policy, settings.greet_after_minutes)
 
 
+def _startup_auth(voice, gate, mic, listener) -> bool:
+    """Голосовая проверка доступа: кодовое слово своим голосом."""
+    from friday.config import settings
+    from friday.enroll import measure_noise, record_utterance
+    from friday.voice.auth import authenticate
+    from friday.voice.stt import transcribe
+
+    noise = measure_noise(mic, seconds=0.5)
+
+    def two_pass(audio) -> str:
+        # С подсказкой Whisper надёжно узнаёт короткое кодовое слово, но если фраза начинается
+        # с текста подсказки, иногда выбрасывает его. Поэтому склеиваем оба варианта.
+        hinted = transcribe(audio, hint=f"{settings.auth_phrase.capitalize()}.")
+        return f"{hinted} | {transcribe(audio)}"
+
+    def say(text: str) -> None:
+        print(f"Пятница: {text}")
+        voice.speak_short(text)
+        time.sleep(listener.latency)  # колонка доигрывает хвост, не записываем саму Пятницу
+        mic.flush()
+
+    result = authenticate(
+        record=lambda: record_utterance(mic, noise, start_timeout=8.0),
+        transcribe=two_pass,
+        speaker_id=gate.speaker_id,
+        say=say,
+        phrase=settings.auth_phrase,
+        attempts=settings.auth_attempts,
+    )
+    if result.granted:
+        gate.mark_owner_contact()
+    listener.reset()
+    return result.granted
+
+
 def greeting_for(name: str) -> str:
     return f"Приветствую, {name}. Чем могу помочь?"
 
@@ -163,7 +198,12 @@ def wake_loop(agent: Agent) -> None:
     voice = _make_voice(agent, background=False)
     gate = _identity_gate(voice)
     owner = gate.speaker_id.voiceprint.name if gate.enabled else ""
-    _start_voice_background(voice, [greeting_for(owner)] if owner else [])
+    extra = []
+    if owner:
+        from friday.voice.auth import Messages
+
+        extra = [greeting_for(owner)] + (Messages(settings.auth_phrase).all(owner) if settings.startup_auth else [])
+    _start_voice_background(voice, extra)
     print("Загружаю модели...")
     detector = create_detector()
     transcribe(np.zeros(16_000, dtype=np.float32))  # прогрев whisper
@@ -186,6 +226,18 @@ def wake_loop(agent: Agent) -> None:
 
     with MicStream(frame_samples=detector.frame_samples) as mic:
         listener = Listener(mic, detector)
+        engine = type(voice.speaker).__name__
+        print(f"Синтез: {engine}. Вывод: {output_device_name() or '?'} (задержка {listener.latency:.1f} сек)")
+
+        authenticated = False
+        if settings.startup_auth:
+            if not gate.enabled:
+                print("Проверка доступа пропущена: нет отпечатка голоса (VOICE_ID=0 или знакомство не пройдено).")
+            elif not _startup_auth(voice, gate, mic, listener):
+                print("Доступ запрещён. Пятница завершает работу.")
+                return
+            else:
+                authenticated = True
 
         def announce(text: str) -> None:
             print(f"Пятница: {text}")
@@ -193,10 +245,8 @@ def wake_loop(agent: Agent) -> None:
                 voice.speak(text)
 
         _start_reminders(announce)
-        engine = type(voice.speaker).__name__
-        print(f"Синтез: {engine}. Вывод: {output_device_name() or '?'} (задержка {listener.latency:.1f} сек)")
         print(f'Слушаю. Скажи "{settings.wake_word.capitalize()}". Ctrl+C выход.')
-        if settings.startup_greeting:
+        if settings.startup_greeting and not authenticated:
             from datetime import datetime
             from zoneinfo import ZoneInfo
 
