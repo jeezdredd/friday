@@ -41,7 +41,7 @@ flowchart LR
 3. `Endpointer` records until 0.9 s of silence, using a threshold derived from the running noise floor.
 4. Whisper transcribes pre-roll + phrase. The command is accepted only if the wake word appears within the first three tokens (`split_wake_command`). This rejects false triggers such as "в пятницу пойдём в кино".
 5. The agent calls Claude with the tool schemas; tool calls are executed and fed back until a final text response or `MAX_TOOL_ROUNDS`.
-6. The response is synthesized and played. The microphone queue is flushed to discard self-echo, then a follow-up window (`FOLLOWUP_SECONDS`) accepts the next utterance without the wake word.
+6. The response is synthesized and played. The listener waits for the output latency (about 2 s for AirPlay/HomePod, auto-detected), flushes the microphone queue to discard self-echo, then a follow-up window (`FOLLOWUP_SECONDS`) accepts the next utterance without the wake word. Utterances that match the last answer (`is_self_echo`) are dropped.
 
 ### Components
 
@@ -121,9 +121,10 @@ All settings are read from environment variables or `.env`. Full list with defau
 | `WAKE_ENGINE` | `vosk` | `vosk` or `porcupine` |
 | `SILENCE_SECONDS` | `0.9` | Pause that ends a phrase |
 | `FOLLOWUP_SECONDS` | `4` | Follow-up window, `0` disables |
+| `OUTPUT_LATENCY` | auto | Output delay in seconds; auto-detects AirPlay (2.0) vs local (0.3) |
 | `TTS_ENGINE` | `say` | `elevenlabs`, `silero` or `say` |
 | `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` | | ElevenLabs credentials and voice |
-| `ELEVENLABS_MODEL` | `eleven_multilingual_v2` | Best Russian prosody; `eleven_flash_v2_5` for lower latency |
+| `ELEVENLABS_MODEL` | `eleven_v4_turbo` | Falls back to `eleven_multilingual_v2` if unavailable on the plan |
 | `ELEVENLABS_STABILITY` / `_SIMILARITY` / `_STYLE` / `_SPEED` | `0.5` / `0.75` / `0` / `1.0` | Voice settings |
 | `ELEVENLABS_STRESS` | `acute` | How dictionary stress marks are passed: `acute` or `none` |
 
@@ -170,7 +171,7 @@ Check the result without calling the LLM:
 python -m friday --say "Включила HomePod, т.е. музыка играет"
 ```
 
-Model choice matters more than settings: `eleven_multilingual_v2` handles Russian intonation and number declension noticeably better than `eleven_flash_v2_5`. `eleven_v3` is more expressive but [not recommended](https://help.elevenlabs.io/hc/en-us/articles/35869054119057-What-is-Eleven-v3) for conversational latency.
+Model choice matters more than settings. The default is `eleven_v4_turbo`, which ElevenLabs positions for real-time assistants. If it is not available on the plan, the client falls back to `eleven_multilingual_v2` at runtime and retries without `language_code` if a model rejects it. `eleven_flash_v2_5` has the lowest latency but flatter Russian intonation.
 
 ### Porcupine
 

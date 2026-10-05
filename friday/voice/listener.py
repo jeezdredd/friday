@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+import difflib
 import logging
 import re
 import shutil
 import subprocess
+import time
 from collections import deque
 from dataclasses import dataclass
 
 import numpy as np
 
 from friday.config import settings
-from friday.voice.audio import SAMPLE_RATE, MicStream, rms
+from friday.voice.audio import SAMPLE_RATE, MicStream, output_latency, rms
 from friday.voice.wakeword import WakeWordDetector
 
 log = logging.getLogger(__name__)
@@ -86,9 +88,11 @@ class Endpointer:
 
 
 class Listener:
-    def __init__(self, mic: MicStream, detector: WakeWordDetector):
+    def __init__(self, mic: MicStream, detector: WakeWordDetector, latency: float | None = None):
         self.mic = mic
         self.detector = detector
+        self.latency = output_latency(override=settings.output_latency) if latency is None else latency
+        log.info("Задержка вывода звука: %.1f сек", self.latency)
         self.noise = NoiseFloor()
         self.frame_seconds = mic.frame_samples / SAMPLE_RATE
         self._ring: deque[np.ndarray] = deque(maxlen=max(1, int(PREROLL_SECONDS / self.frame_seconds)))
@@ -132,14 +136,38 @@ class Listener:
         return np.concatenate(parts) if parts else np.zeros(0, dtype=np.float32)
 
     def after_speaking(self) -> None:
-        """Пока Пятница говорила, микрофон слышал её саму. Выбрасываем это."""
+        """Пока Пятница говорила, микрофон слышал её саму. Ждём, пока колонка доиграет
+        хвост (у AirPlay это пара секунд), и выбрасываем всё услышанное."""
+        time.sleep(self.latency)
+        self.reset()
+
+    def reset(self) -> None:
         self.mic.flush()
         self.detector.reset()
+
+    def chime(self) -> None:
+        # Через AirPlay сигнал придёт с опозданием и наложится на речь, тогда он только мешает
+        if self.latency < 0.5:
+            chime()
 
 
 def chime() -> None:
     if settings.chime and shutil.which("afplay"):
         subprocess.Popen(["afplay", "-v", "0.4", CHIME_SOUND])
+
+
+def _words(text: str) -> list[str]:
+    return re.findall(r"\w+", text.lower().replace("ё", "е"))
+
+
+def is_self_echo(heard: str, last_answer: str, threshold: float = 0.6) -> bool:
+    """Микрофон расслышал хвост ответа самой Пятницы, а не пользователя."""
+    heard_w, answer_w = _words(heard), _words(last_answer)
+    if not heard_w or not answer_w:
+        return False
+    if " ".join(heard_w) in " ".join(answer_w):
+        return True
+    return difflib.SequenceMatcher(None, heard_w, answer_w).ratio() >= threshold
 
 
 def split_wake_command(text: str, wake_word: str = "", max_position: int = 3) -> tuple[bool, str]:

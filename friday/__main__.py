@@ -51,11 +51,12 @@ def text_loop(agent: Agent, speak: bool) -> None:
             speaker.speak(answer)
 
 
-def _reply(agent: Agent, speaker, text: str) -> None:
+def _reply(agent: Agent, speaker, text: str) -> str:
     print(f"Ты: {text}")
     answer = agent.ask(text)
     print(f"Пятница: {answer}")
     speaker.speak(answer)
+    return answer
 
 
 def ptt_loop(agent: Agent) -> None:
@@ -82,12 +83,13 @@ def wake_loop(agent: Agent) -> None:
     import numpy as np
 
     from friday.config import settings
-    from friday.voice.audio import MicStream
-    from friday.voice.listener import Listener, chime, split_wake_command, strip_wake_word
+    from friday.voice.audio import MicStream, output_device_name
+    from friday.voice.listener import Listener, is_self_echo, split_wake_command, strip_wake_word
     from friday.voice.stt import transcribe
     from friday.voice.tts import default_speaker
     from friday.voice.wakeword import create_detector
 
+    log = logging.getLogger(__name__)
     speaker = default_speaker()
     print("Загружаю модели...")
     detector = create_detector()
@@ -95,17 +97,21 @@ def wake_loop(agent: Agent) -> None:
 
     with MicStream(frame_samples=detector.frame_samples) as mic:
         listener = Listener(mic, detector)
+        print(
+            f"Синтез: {type(speaker).__name__}. Вывод: {output_device_name() or '?'} (задержка {listener.latency:.1f} сек)"
+        )
         print(f'Слушаю. Скажи "{settings.wake_word.capitalize()}". Ctrl+C выход.')
         try:
             while True:
                 listener.wait_for_wake_word()
-                chime()
+                listener.chime()
+                print("(услышала обращение)")
                 heard = transcribe(listener.record_phrase())
                 addressed, text = split_wake_command(heard)
                 if not addressed:
                     # детектор услышал похожее слово, но Whisper не подтвердил обращение
-                    logging.getLogger(__name__).info("Ложное срабатывание: %r", heard)
-                    listener.after_speaking()
+                    log.info("Ложное срабатывание: %r", heard)
+                    listener.reset()
                     continue
                 if not text:
                     # сказали только "Пятница": отзываемся и ждём саму команду
@@ -115,7 +121,7 @@ def wake_loop(agent: Agent) -> None:
                     if not text:
                         continue
 
-                _reply(agent, speaker, text)
+                answer = _reply(agent, speaker, text)
                 listener.after_speaking()
 
                 # окно продолжения: можно ответить без повторного "Пятница"
@@ -124,7 +130,10 @@ def wake_loop(agent: Agent) -> None:
                     text = strip_wake_word(transcribe(audio)) if audio.size else ""
                     if not text:
                         break
-                    _reply(agent, speaker, text)
+                    if is_self_echo(text, answer):
+                        log.info("Пропускаю эхо собственного ответа: %r", text)
+                        continue
+                    answer = _reply(agent, speaker, text)
                     listener.after_speaking()
         except KeyboardInterrupt:
             print()

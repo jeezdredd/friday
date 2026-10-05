@@ -51,6 +51,30 @@ class MicStream:
                 return
 
 
+AIRPLAY_MARKERS = ("homepod", "airplay", "apple tv")
+AIRPLAY_LATENCY = 2.0
+LOCAL_LATENCY = 0.3
+
+
+def output_device_name() -> str:
+    try:
+        import sounddevice as sd
+
+        return str(sd.query_devices(kind="output")["name"])
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def output_latency(device_name: str | None = None, override: str = "") -> float:
+    """Сколько звук идёт до колонки после того, как мы закончили его отдавать.
+    AirPlay (HomePod) буферизует около двух секунд: всё это время микрофон слышит
+    саму Пятницу, и это нельзя принимать за речь пользователя."""
+    if override:
+        return float(override)
+    name = (device_name if device_name is not None else output_device_name()).lower()
+    return AIRPLAY_LATENCY if any(m in name for m in AIRPLAY_MARKERS) else LOCAL_LATENCY
+
+
 def to_int16_bytes(frame: np.ndarray) -> bytes:
     return (np.clip(frame, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
 

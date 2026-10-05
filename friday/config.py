@@ -62,6 +62,8 @@ class Settings:
     start_timeout_seconds: float = field(default_factory=lambda: _float("START_TIMEOUT_SECONDS", "5"))
     followup_seconds: float = field(default_factory=lambda: _float("FOLLOWUP_SECONDS", "4"))
     chime: bool = field(default_factory=lambda: _env("CHIME", "1") == "1")
+    # Задержка звука на выходе, сек. Пусто = авто: ~2 сек для HomePod/AirPlay, иначе 0.3
+    output_latency: str = field(default_factory=lambda: _env("OUTPUT_LATENCY"))
 
     # Синтез речи
     tts_engine: str = field(default_factory=lambda: _env("TTS_ENGINE", "say"))  # say | silero | elevenlabs
@@ -70,8 +72,8 @@ class Settings:
     silero_speaker: str = field(default_factory=lambda: _env("SILERO_SPEAKER", "xenia"))
     elevenlabs_api_key: str = field(default_factory=lambda: _env("ELEVENLABS_API_KEY"))
     elevenlabs_voice_id: str = field(default_factory=lambda: _env("ELEVENLABS_VOICE_ID"))
-    # multilingual_v2: лучшая интонация и склонение чисел в русском; flash_v2_5: быстрее, но площе
-    elevenlabs_model: str = field(default_factory=lambda: _env("ELEVENLABS_MODEL", "eleven_multilingual_v2"))
+    # v4_turbo: новейшая модель для ассистентов (~100 мс); если недоступна, откат на multilingual_v2
+    elevenlabs_model: str = field(default_factory=lambda: _env("ELEVENLABS_MODEL", "eleven_v4_turbo"))
     # 0..1: ниже = живее и эмоциональнее, выше = ровнее и предсказуемее
     elevenlabs_stability: float = field(default_factory=lambda: _float("ELEVENLABS_STABILITY", "0.5"))
     elevenlabs_similarity: float = field(default_factory=lambda: _float("ELEVENLABS_SIMILARITY", "0.75"))

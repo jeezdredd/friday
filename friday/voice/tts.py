@@ -49,23 +49,30 @@ class MacSay:
 
 class ElevenLabs:
     SAMPLE_RATE = 22_050  # pcm 22.05 кГц доступен на всех тарифах
+    FALLBACK_MODEL = "eleven_multilingual_v2"
+    NO_LANGUAGE_CODE = frozenset({"eleven_multilingual_v2"})
 
-    def __init__(self):
+    def __init__(self, client: httpx.Client | None = None):
         if not settings.elevenlabs_api_key:
             raise RuntimeError("ELEVENLABS_API_KEY не задан в .env")
         if not settings.elevenlabs_voice_id:
             raise RuntimeError("ELEVENLABS_VOICE_ID не задан. Запусти: python -m friday.voice_setup")
-        self._client = httpx.Client(
+        self._client = client or httpx.Client(
             base_url="https://api.elevenlabs.io/v1",
             headers={"xi-api-key": settings.elevenlabs_api_key},
             timeout=30,
         )
+        self.model = settings.elevenlabs_model
+        self._send_language = self.model not in self.NO_LANGUAGE_CODE
 
-    @staticmethod
-    def build_request(text: str) -> dict:
+    @classmethod
+    def build_request(cls, text: str, model: str | None = None, language: bool | None = None) -> dict:
+        model = model or settings.elevenlabs_model
+        if language is None:
+            language = model not in cls.NO_LANGUAGE_CODE
         body: dict = {
             "text": prepare_for_speech(text, stress=settings.elevenlabs_stress),
-            "model_id": settings.elevenlabs_model,
+            "model_id": model,
             "voice_settings": {
                 "stability": settings.elevenlabs_stability,
                 "similarity_boost": settings.elevenlabs_similarity,
@@ -74,21 +81,38 @@ class ElevenLabs:
                 "use_speaker_boost": settings.elevenlabs_speaker_boost,
             },
         }
-        if "v2_5" in settings.elevenlabs_model:  # явный язык поддерживают только flash v2.5
+        if language:
             body["language_code"] = settings.stt_language
         return body
 
     def synthesize(self, text: str) -> bytes:
-        body = self.build_request(text)
-        log.info("TTS text: %s", body["text"])
-        resp = self._client.post(
-            f"/text-to-speech/{settings.elevenlabs_voice_id}",
-            params={"output_format": f"pcm_{self.SAMPLE_RATE}"},
-            json=body,
-        )
-        if resp.status_code >= 400:
+        """Синтез с самовосстановлением: если модель не принимает language_code,
+        повторяем без него; если модель недоступна на тарифе, откатываемся на FALLBACK_MODEL."""
+        for _ in range(3):
+            body = self.build_request(text, self.model, self._send_language)
+            log.info("TTS [%s]: %s", self.model, body["text"])
+            resp = self._client.post(
+                f"/text-to-speech/{settings.elevenlabs_voice_id}",
+                params={"output_format": f"pcm_{self.SAMPLE_RATE}"},
+                json=body,
+            )
+            if resp.status_code < 400:
+                return resp.content
+
+            error = resp.text.lower()
+            if self._send_language and resp.status_code in (400, 422) and "language" in error:
+                log.warning("Модель %s не принимает language_code, отправляю без него", self.model)
+                self._send_language = False
+                continue
+            if self.model != self.FALLBACK_MODEL and resp.status_code in (400, 403, 404, 422) and "model" in error:
+                log.warning(
+                    "Модель %s недоступна (%s), переключаюсь на %s", self.model, resp.status_code, self.FALLBACK_MODEL
+                )
+                self.model = self.FALLBACK_MODEL
+                self._send_language = False
+                continue
             raise RuntimeError(f"ElevenLabs {resp.status_code}: {resp.text[:200]}")
-        return resp.content
+        raise RuntimeError("ElevenLabs: не удалось синтезировать речь")
 
     def speak(self, text: str) -> None:
         if not text:
