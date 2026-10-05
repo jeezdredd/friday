@@ -29,13 +29,13 @@ def _short_state(s: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-@tool
+@tool(filler="")
 def list_lights() -> list[dict[str, Any]]:
     """Список всех ламп в доме с текущим состоянием (вкл/выкл, яркость, цвет)."""
     return [_short_state(s) for s in get_ha().entities("light")]
 
 
-@tool
+@tool(filler="")
 def get_light_state(
     entity_id: Annotated[str | None, "entity_id лампы, например light.room. Пусто = лампа по умолчанию"] = None,
 ) -> dict[str, Any]:
@@ -43,7 +43,7 @@ def get_light_state(
     return _short_state(get_ha().state(_resolve_light(entity_id)))
 
 
-@tool
+@tool(filler="")
 def set_light(
     on: Annotated[bool, "true = включить, false = выключить"],
     entity_id: Annotated[str | None, "entity_id лампы. Пусто = лампа по умолчанию"] = None,
@@ -81,7 +81,7 @@ def get_entity_state(
     return {"entity_id": entity_id, "state": s["state"], "attributes": s.get("attributes", {})}
 
 
-@tool
+@tool(filler="Смотрю датчики.")
 def list_sensors() -> list[dict[str, Any]]:
     """Список всех датчиков в доме с текущими значениями."""
     return [

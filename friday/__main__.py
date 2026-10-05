@@ -12,24 +12,65 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import time
 
 from friday.agent import Agent
 from friday.tools import load_all
 
 EXIT_WORDS = {"exit", "quit", "выход", "пока"}
 
+log = logging.getLogger("friday")
+
 
 def _print_tool_call(name: str, args: dict) -> None:
     print(f"  [tool] {name}({json.dumps(args, ensure_ascii=False)})")
 
 
+def _make_voice(agent: Agent):
+    """Голосовой выход: ответы, заполнители во время работы инструментов, кеш коротких фраз."""
+    from friday.voice.output import VoiceOutput
+    from friday.voice.tts import create_speaker
+
+    voice = VoiceOutput(create_speaker(), agent.registry)
+    voice.prefetch_async()
+
+    def on_tool_call(name: str, args: dict) -> None:
+        _print_tool_call(name, args)
+        voice.on_tool_call(name, args)
+
+    agent.on_tool_call = on_tool_call
+    return voice
+
+
+def _start_reminders(announce):
+    from friday.scheduler import ReminderScheduler
+
+    return ReminderScheduler(announce).start()
+
+
+def _reply(agent: Agent, voice, text: str) -> str:
+    print(f"Ты: {text}")
+    started = time.monotonic()
+    if voice:
+        voice.begin_request()
+    answer = agent.ask(text)
+    log.info("Ответ агента за %.2f сек", time.monotonic() - started)
+    print(f"Пятница: {answer}")
+    if voice:
+        voice.speak(answer)
+        log.info("Всего с конца фразы до конца речи: %.2f сек", time.monotonic() - started)
+    return answer
+
+
 def text_loop(agent: Agent, speak: bool) -> None:
-    speaker = None
-    if speak:
-        from friday.voice.tts import default_speaker
+    voice = _make_voice(agent) if speak else None
 
-        speaker = default_speaker()
+    def announce(text: str) -> None:
+        print(f"\nПятница: {text}\n> ", end="", flush=True)
+        if voice:
+            voice.speak(text)
 
+    _start_reminders(announce)
     print("Пятница на связи. /reset очистить контекст, exit выйти.")
     while True:
         try:
@@ -45,26 +86,15 @@ def text_loop(agent: Agent, speak: bool) -> None:
             agent.reset()
             print("Контекст очищен.")
             continue
-        answer = agent.ask(text)
-        print(f"Пятница: {answer}")
-        if speaker:
-            speaker.speak(answer)
-
-
-def _reply(agent: Agent, speaker, text: str) -> str:
-    print(f"Ты: {text}")
-    answer = agent.ask(text)
-    print(f"Пятница: {answer}")
-    speaker.speak(answer)
-    return answer
+        _reply(agent, voice, text)
 
 
 def ptt_loop(agent: Agent) -> None:
     from friday.voice.recorder import record_push_to_talk
     from friday.voice.stt import transcribe
-    from friday.voice.tts import default_speaker
 
-    speaker = default_speaker()
+    voice = _make_voice(agent)
+    _start_reminders(lambda text: (print(f"\nПятница: {text}"), voice.speak(text)))
     print("Push-to-talk. Ctrl+C выход.")
     while True:
         try:
@@ -76,7 +106,7 @@ def ptt_loop(agent: Agent) -> None:
         if not text:
             print("(ничего не расслышала)")
             continue
-        _reply(agent, speaker, text)
+        _reply(agent, voice, text)
 
 
 def wake_loop(agent: Agent) -> None:
@@ -86,27 +116,37 @@ def wake_loop(agent: Agent) -> None:
     from friday.voice.audio import MicStream, output_device_name
     from friday.voice.listener import Listener, is_self_echo, split_wake_command, strip_wake_word
     from friday.voice.stt import transcribe
-    from friday.voice.tts import default_speaker
     from friday.voice.wakeword import create_detector
 
-    log = logging.getLogger(__name__)
-    speaker = default_speaker()
+    voice = _make_voice(agent)
     print("Загружаю модели...")
     detector = create_detector()
     transcribe(np.zeros(16_000, dtype=np.float32))  # прогрев whisper
 
+    def timed_transcribe(audio) -> str:
+        started = time.monotonic()
+        text = transcribe(audio)
+        log.info("Распознавание: %.2f сек", time.monotonic() - started)
+        return text
+
     with MicStream(frame_samples=detector.frame_samples) as mic:
         listener = Listener(mic, detector)
-        print(
-            f"Синтез: {type(speaker).__name__}. Вывод: {output_device_name() or '?'} (задержка {listener.latency:.1f} сек)"
-        )
+
+        def announce(text: str) -> None:
+            print(f"Пятница: {text}")
+            with listener.muted():
+                voice.speak(text)
+
+        _start_reminders(announce)
+        engine = type(voice.speaker).__name__
+        print(f"Синтез: {engine}. Вывод: {output_device_name() or '?'} (задержка {listener.latency:.1f} сек)")
         print(f'Слушаю. Скажи "{settings.wake_word.capitalize()}". Ctrl+C выход.')
         try:
             while True:
                 listener.wait_for_wake_word()
                 listener.chime()
                 print("(услышала обращение)")
-                heard = transcribe(listener.record_phrase())
+                heard = timed_transcribe(listener.record_phrase())
                 addressed, text = split_wake_command(heard)
                 if not addressed:
                     # детектор услышал похожее слово, но Whisper не подтвердил обращение
@@ -115,25 +155,25 @@ def wake_loop(agent: Agent) -> None:
                     continue
                 if not text:
                     # сказали только "Пятница": отзываемся и ждём саму команду
-                    speaker.speak("Да?")
+                    voice.speak_short("Да?")
                     listener.after_speaking()
-                    text = transcribe(listener.record_phrase(with_preroll=False))
+                    text = timed_transcribe(listener.record_phrase(with_preroll=False))
                     if not text:
                         continue
 
-                answer = _reply(agent, speaker, text)
+                answer = _reply(agent, voice, text)
                 listener.after_speaking()
 
                 # окно продолжения: можно ответить без повторного "Пятница"
                 while settings.followup_seconds > 0:
                     audio = listener.record_phrase(with_preroll=False, start_timeout=settings.followup_seconds)
-                    text = strip_wake_word(transcribe(audio)) if audio.size else ""
+                    text = strip_wake_word(timed_transcribe(audio)) if audio.size else ""
                     if not text:
                         break
                     if is_self_echo(text, answer):
                         log.info("Пропускаю эхо собственного ответа: %r", text)
                         continue
-                    answer = _reply(agent, speaker, text)
+                    answer = _reply(agent, voice, text)
                     listener.after_speaking()
         except KeyboardInterrupt:
             print()

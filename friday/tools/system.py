@@ -40,7 +40,7 @@ _WEATHER_CODES = {
 }
 
 
-@tool
+@tool(filler="")
 def get_datetime() -> str:
     """Текущие дата, время и день недели."""
     tz = get_timezone()
@@ -48,7 +48,7 @@ def get_datetime() -> str:
     return now.strftime("%Y-%m-%d %H:%M, %A") + f" ({tz})"
 
 
-@tool
+@tool(filler="")
 def get_home_location() -> dict[str, Any]:
     """Где находится дом пользователя: город, страна, координаты, таймзона."""
     loc = get_location()
@@ -57,7 +57,7 @@ def get_home_location() -> dict[str, Any]:
     return asdict(loc)
 
 
-@tool
+@tool(filler="Смотрю прогноз.")
 def get_weather(
     days: Annotated[int, "Сколько дней прогноза вернуть, 1-7"] = 1,
 ) -> dict[str, Any]:

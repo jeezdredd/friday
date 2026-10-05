@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import time
 from collections import deque
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 import numpy as np
@@ -94,6 +95,8 @@ class Listener:
         self.latency = output_latency(override=settings.output_latency) if latency is None else latency
         log.info("Задержка вывода звука: %.1f сек", self.latency)
         self.noise = NoiseFloor()
+        self._muted_until = 0.0
+        self._needs_reset = False
         self.frame_seconds = mic.frame_samples / SAMPLE_RATE
         self._ring: deque[np.ndarray] = deque(maxlen=max(1, int(PREROLL_SECONDS / self.frame_seconds)))
         self._preroll = np.zeros(0, dtype=np.float32)
@@ -105,6 +108,14 @@ class Listener:
         self.detector.reset()
         while True:
             frame = self.mic.read()
+            if time.monotonic() < self._muted_until:
+                # Пятница сама говорит (например, напоминание из фонового потока): не слушаем
+                self._needs_reset = True
+                continue
+            if self._needs_reset:
+                self._ring.clear()
+                self.detector.reset()
+                self._needs_reset = False
             self._ring.append(frame)
             self.noise.update(rms(frame))
             if self.detector.process(frame):
@@ -144,6 +155,16 @@ class Listener:
     def reset(self) -> None:
         self.mic.flush()
         self.detector.reset()
+
+    @contextmanager
+    def muted(self):
+        """Для речи из других потоков: пока Пятница говорит и колонка доигрывает хвост,
+        ожидание wake word пропускает кадры. Детектор сбрасывается в основном потоке."""
+        self._muted_until = float("inf")
+        try:
+            yield
+        finally:
+            self._muted_until = time.monotonic() + self.latency
 
     def chime(self) -> None:
         # Через AirPlay сигнал придёт с опозданием и наложится на речь, тогда он только мешает

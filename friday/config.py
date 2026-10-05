@@ -62,6 +62,11 @@ class Settings:
     start_timeout_seconds: float = field(default_factory=lambda: _float("START_TIMEOUT_SECONDS", "5"))
     followup_seconds: float = field(default_factory=lambda: _float("FOLLOWUP_SECONDS", "4"))
     chime: bool = field(default_factory=lambda: _env("CHIME", "1") == "1")
+    # Напоминания
+    reminder_check_seconds: float = field(default_factory=lambda: _float("REMINDER_CHECK_SECONDS", "10"))
+    # Имя списка в Apple «Напоминаниях» для дублирования (пусто = выключено)
+    apple_reminders_list: str = field(default_factory=lambda: _env("APPLE_REMINDERS_LIST"))
+
     # Задержка звука на выходе, сек. Пусто = авто: ~2 сек для HomePod/AirPlay, иначе 0.3
     output_latency: str = field(default_factory=lambda: _env("OUTPUT_LATENCY"))
 

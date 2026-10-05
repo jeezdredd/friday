@@ -12,11 +12,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import shutil
 import subprocess
+import time
 from functools import lru_cache
+from pathlib import Path
 from typing import Protocol
 
 import httpx
@@ -85,20 +88,25 @@ class ElevenLabs:
             body["language_code"] = settings.stt_language
         return body
 
-    def synthesize(self, text: str) -> bytes:
-        """Синтез с самовосстановлением: если модель не принимает language_code,
+    def _open(self, text: str, stream: bool) -> httpx.Response:
+        """Отправляет запрос с самовосстановлением: если модель не принимает language_code,
         повторяем без него; если модель недоступна на тарифе, откатываемся на FALLBACK_MODEL."""
+        suffix = "/stream" if stream else ""
         for _ in range(3):
             body = self.build_request(text, self.model, self._send_language)
             log.info("TTS [%s]: %s", self.model, body["text"])
-            resp = self._client.post(
-                f"/text-to-speech/{settings.elevenlabs_voice_id}",
+            request = self._client.build_request(
+                "POST",
+                f"/text-to-speech/{settings.elevenlabs_voice_id}{suffix}",
                 params={"output_format": f"pcm_{self.SAMPLE_RATE}"},
                 json=body,
             )
+            resp = self._client.send(request, stream=stream)
             if resp.status_code < 400:
-                return resp.content
+                return resp
 
+            resp.read()
+            resp.close()
             error = resp.text.lower()
             if self._send_language and resp.status_code in (400, 422) and "language" in error:
                 log.warning("Модель %s не принимает language_code, отправляю без него", self.model)
@@ -114,13 +122,78 @@ class ElevenLabs:
             raise RuntimeError(f"ElevenLabs {resp.status_code}: {resp.text[:200]}")
         raise RuntimeError("ElevenLabs: не удалось синтезировать речь")
 
+    def synthesize(self, text: str) -> bytes:
+        resp = self._open(text, stream=False)
+        return resp.content
+
     def speak(self, text: str) -> None:
+        """Потоковое воспроизведение: звук начинает играть с первых байт ответа,
+        а не после синтеза всей фразы."""
         if not text:
             return
+        import sounddevice as sd
+
+        started = time.monotonic()
+        resp = self._open(text, stream=True)
+        try:
+            with sd.RawOutputStream(samplerate=self.SAMPLE_RATE, channels=1, dtype="int16") as out:
+                pending = b""
+                first = True
+                for chunk in resp.iter_bytes():
+                    if first:
+                        log.info("TTS первый звук через %.2f сек", time.monotonic() - started)
+                        first = False
+                    data = pending + chunk
+                    cut = len(data) - len(data) % 2  # int16 = 2 байта, не рвём сэмпл
+                    out.write(data[:cut])
+                    pending = data[cut:]
+        finally:
+            resp.close()
+
+    # ---------- кеш коротких фраз (заполнители, "Да?") ----------
+
+    def _cache_path(self, text: str) -> Path:
+        s = settings
+        key = "|".join(
+            map(
+                str,
+                (
+                    s.elevenlabs_voice_id,
+                    self.model,
+                    s.elevenlabs_stability,
+                    s.elevenlabs_similarity,
+                    s.elevenlabs_style,
+                    s.elevenlabs_speed,
+                    s.elevenlabs_stress,
+                    text,
+                ),
+            )
+        )
+        return s.data_dir / "tts_cache" / f"{hashlib.sha1(key.encode()).hexdigest()}.pcm"
+
+    def cached_audio(self, text: str) -> bytes:
+        path = self._cache_path(text)
+        if path.exists():
+            return path.read_bytes()
+        audio = self.synthesize(text)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(audio)
+        return audio
+
+    def prefetch(self, phrases: list[str]) -> None:
+        """Синтезирует фразы заранее, чтобы потом они звучали мгновенно. Тратит лимит один раз."""
+        for phrase in phrases:
+            try:
+                self.cached_audio(phrase)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Не удалось закешировать %r: %s", phrase, exc)
+                return
+
+    def speak_cached(self, text: str) -> None:
         import numpy as np
         import sounddevice as sd
 
-        audio = np.frombuffer(self.synthesize(text), dtype=np.int16)
+        audio = np.frombuffer(self.cached_audio(text), dtype=np.int16)
         sd.play(audio, self.SAMPLE_RATE)
         sd.wait()
 

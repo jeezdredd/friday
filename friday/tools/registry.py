@@ -40,6 +40,9 @@ class Tool:
     description: str
     func: Callable[..., Any]
     input_schema: dict[str, Any]
+    # Что сказать голосом, пока инструмент работает и модель думает над ответом.
+    # None = случайная общая фраза, "" = молчать (для быстрых действий вроде света).
+    filler: str | None = None
 
     def to_anthropic(self) -> dict[str, Any]:
         return {
@@ -59,14 +62,14 @@ class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, Tool] = {}
 
-    def register(self, func: Callable[..., Any], name: str | None = None) -> Tool:
+    def register(self, func: Callable[..., Any], name: str | None = None, filler: str | None = None) -> Tool:
         tool_name = name or func.__name__
         if tool_name in self._tools:
             raise ValueError(f"Инструмент {tool_name!r} уже зарегистрирован")
         description = inspect.cleandoc(func.__doc__ or "").strip()
         if not description:
             raise ValueError(f"У инструмента {tool_name!r} нет docstring, LLM не поймёт, зачем он")
-        t = Tool(tool_name, description, func, build_schema(func))
+        t = Tool(tool_name, description, func, build_schema(func), filler)
         self._tools[tool_name] = t
         return t
 
@@ -95,11 +98,14 @@ class ToolRegistry:
 registry = ToolRegistry()
 
 
-def tool(func: Callable[..., Any] | None = None, *, name: str | None = None):
-    """Декоратор: регистрирует функцию как инструмент ассистента."""
+def tool(func: Callable[..., Any] | None = None, *, name: str | None = None, filler: str | None = None):
+    """Декоратор: регистрирует функцию как инструмент ассистента.
+
+    filler: фраза, которую Пятница скажет, пока инструмент выполняется.
+    """
 
     def wrap(f: Callable[..., Any]) -> Callable[..., Any]:
-        registry.register(f, name=name)
+        registry.register(f, name=name, filler=filler)
         return f
 
     return wrap(func) if func is not None else wrap

@@ -30,7 +30,7 @@ def _save(facts: list[str]) -> None:
     _path().write_text(json.dumps(facts, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-@tool
+@tool(filler="")
 def remember(fact: Annotated[str, "Короткий факт о пользователе или его доме"]) -> str:
     """Запомнить факт надолго (предпочтения, имена, привычки). Используй, когда пользователь просит запомнить."""
     facts = load_facts()
@@ -40,7 +40,7 @@ def remember(fact: Annotated[str, "Короткий факт о пользова
     return "Запомнила"
 
 
-@tool
+@tool(filler="")
 def forget(fact_substring: Annotated[str, "Часть текста факта, который нужно удалить"]) -> str:
     """Удалить запомненный факт."""
     facts = load_facts()

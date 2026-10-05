@@ -16,6 +16,9 @@ Self-hosted voice assistant for a smart home. Wake word detection and speech rec
 - Pluggable TTS: ElevenLabs, Silero (local), macOS `say`, with automatic fallback
 - Home location resolved once by IP and cached; timezone derived from it
 - Persistent user facts injected into the system prompt
+- Reminders and timers with recurrence, spoken on time, mirrored to macOS notifications and optionally Apple Reminders
+- Latency masking: per-tool filler phrases played from a local audio cache while tools and the model run
+- Streaming TTS playback and prompt caching for the static part of the system prompt
 
 ## Architecture
 
@@ -40,8 +43,8 @@ flowchart LR
 2. The keyword spotter emits a trigger on the exact token `пятница`.
 3. `Endpointer` records until 0.9 s of silence, using a threshold derived from the running noise floor.
 4. Whisper transcribes pre-roll + phrase. The command is accepted only if the wake word appears within the first three tokens (`split_wake_command`). This rejects false triggers such as "в пятницу пойдём в кино".
-5. The agent calls Claude with the tool schemas; tool calls are executed and fed back until a final text response or `MAX_TOOL_ROUNDS`.
-6. The response is synthesized and played. The listener waits for the output latency (about 2 s for AirPlay/HomePod, auto-detected), flushes the microphone queue to discard self-echo, then a follow-up window (`FOLLOWUP_SECONDS`) accepts the next utterance without the wake word. Utterances that match the last answer (`is_self_echo`) are dropped.
+5. The agent calls Claude with the tool schemas; tool calls are executed and fed back until a final text response or `MAX_TOOL_ROUNDS`. On the first tool call a filler phrase ("Смотрю прогноз.") is played in the background from a pre-synthesized cache, so the user hears a response within a second while tools and the second model round run.
+6. The response is synthesized via the streaming endpoint and playback starts with the first audio chunk. The listener waits for the output latency (about 2 s for AirPlay/HomePod, auto-detected), flushes the microphone queue to discard self-echo, then a follow-up window (`FOLLOWUP_SECONDS`) accepts the next utterance without the wake word. Utterances that match the last answer (`is_self_echo`) are dropped.
 
 ### Components
 
@@ -59,6 +62,10 @@ flowchart LR
 | `friday/voice/stt.py` | Transcription and hallucination filtering |
 | `friday/voice/tts.py` | TTS backends and text normalization |
 | `friday/voice_setup.py` | Provisioning the ElevenLabs voice |
+| `friday/voice/output.py` | Single speech output: lock, filler phrases, phrase cache prefetch |
+| `friday/reminders.py` | Reminder storage (SQLite), time parsing, recurrence |
+| `friday/scheduler.py` | Background thread that announces due reminders |
+| `friday/integrations/apple_reminders.py` | Optional mirror to Apple Reminders via AppleScript |
 
 ## Requirements
 
@@ -121,6 +128,8 @@ All settings are read from environment variables or `.env`. Full list with defau
 | `WAKE_ENGINE` | `vosk` | `vosk` or `porcupine` |
 | `SILENCE_SECONDS` | `0.9` | Pause that ends a phrase |
 | `FOLLOWUP_SECONDS` | `4` | Follow-up window, `0` disables |
+| `REMINDER_CHECK_SECONDS` | `10` | Reminder scheduler polling interval |
+| `APPLE_REMINDERS_LIST` | | Mirror one-off reminders to this Apple Reminders list; empty disables |
 | `OUTPUT_LATENCY` | auto | Output delay in seconds; auto-detects AirPlay (2.0) vs local (0.3) |
 | `TTS_ENGINE` | `say` | `elevenlabs`, `silero` or `say` |
 | `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` | | ElevenLabs credentials and voice |
@@ -173,6 +182,27 @@ python -m friday --say "Включила HomePod, т.е. музыка играе
 
 Model choice matters more than settings. The default is `eleven_v4_turbo`, which ElevenLabs positions for real-time assistants. If it is not available on the plan, the client falls back to `eleven_multilingual_v2` at runtime and retries without `language_code` if a model rejects it. `eleven_flash_v2_5` has the lowest latency but flatter Russian intonation.
 
+### Reminders and timers
+
+Ask in natural language: "Пятница, напомни через двадцать минут выключить духовку", "поставь таймер на десять минут", "напоминай по будням в девять утра выпить таблетки", "что у меня запланировано", "отмени напоминание про духовку".
+
+- The model passes either `delay_minutes` (relative time) or `when` as local ISO time; date arithmetic is done in code, not by the model.
+- Stored in SQLite (`~/.friday/friday.db`) in UTC. Recurrence (`daily`, `weekdays`, `weekly`) is computed in local time, so 08:00 stays 08:00 across DST changes.
+- A background scheduler announces due reminders through the shared speech lock (never on top of an answer) and posts a macOS notification.
+- Reminders missed while the process was not running are announced at startup as missed; recurring ones skip past occurrences instead of firing repeatedly.
+- `APPLE_REMINDERS_LIST=Пятница` additionally creates one-off reminders in Apple Reminders, so they reach the iPhone and Watch. macOS asks for automation permission on first use.
+
+Reminders fire only while Friday is running. Run it as a background service for always-on behavior (see Roadmap).
+
+### Latency
+
+Run with `-v` to see per-stage timings: speech recognition, each LLM round with cached token count, each tool call, time to first TTS audio and total time to the end of speech. Typical levers, by impact:
+
+1. `FRIDAY_MODEL`: a smaller model shortens both LLM rounds.
+2. Output device: AirPlay adds about 2 s of buffering compared to the Mac speakers.
+3. `WHISPER_MODEL=base` speeds up recognition at some accuracy cost.
+4. Filler phrases do not reduce latency but remove the silence; per-tool phrases are set with `@tool(filler="...")`, `filler=""` disables them for fast tools.
+
 ### Porcupine
 
 Train the keyword in [Picovoice Console](https://console.picovoice.ai/) (language: Russian), then set `WAKE_ENGINE=porcupine`, `PORCUPINE_ACCESS_KEY`, `PORCUPINE_KEYWORD_PATH` and `PORCUPINE_MODEL_PATH` (`porcupine_params_ru.pv`).
@@ -203,6 +233,7 @@ Contract:
 - Parameters without defaults are required.
 - Return `str` or any JSON-serializable value.
 - Exceptions are caught and returned to the model as `is_error` results; they do not crash the loop.
+- `@tool(filler="...")` sets the phrase spoken while the tool runs; `filler=""` keeps silent for fast tools, omitted uses a generic phrase.
 - Tools with side effects that cannot be undone must be confirmed by the user; the system prompt enforces this, keep the tool description explicit about it.
 
 New TTS backends implement `speak(text: str) -> None` and are registered in `create_speaker()`. New wake word backends implement `frame_samples`, `process(frame) -> bool` and `reset()`.
@@ -243,9 +274,11 @@ Tests do not require network, audio hardware or API keys: network access is stub
 
 ## Roadmap
 
-- [ ] Streaming TTS: start playback before the full response is generated
-- [ ] Streaming LLM responses
+- [x] Streaming TTS playback
+- [ ] Sentence-level streaming from LLM to TTS
 - [ ] Scheduled proactive briefings
+- [ ] Run as a launchd service so reminders fire without an open terminal
+- [ ] Apple Calendar integration
 - [ ] Confirmation flow for irreversible actions enforced in code, not only in the prompt
 - [ ] Web dashboard: status, history, memory management
 - [ ] CI pipeline

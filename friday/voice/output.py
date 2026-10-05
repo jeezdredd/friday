@@ -1,0 +1,108 @@
+"""Единая точка вывода речи.
+
+Всё, что Пятница говорит (ответы, заполнители, напоминания), идёт через VoiceOutput:
+- одна блокировка, поэтому напоминание не заговорит поверх ответа;
+- заполнитель ("Секунду, уточняю") играет в фоне, пока работают инструменты и модель,
+  а основной ответ дожидается его окончания, чтобы не наложиться.
+"""
+
+from __future__ import annotations
+
+import logging
+import random
+import threading
+from collections.abc import Iterable
+
+from friday.tools import ToolRegistry
+
+log = logging.getLogger(__name__)
+
+GENERIC_FILLERS = (
+    "Секунду.",
+    "Сейчас уточню.",
+    "Выясняю.",
+    "Минутку, проверяю.",
+    "Сейчас посмотрю.",
+    "Дай секунду.",
+)
+SHORT_PHRASES = ("Да?",)
+
+
+class VoiceOutput:
+    def __init__(self, speaker, registry: ToolRegistry | None = None, rng: random.Random | None = None):
+        self.speaker = speaker
+        self.registry = registry
+        self._lock = threading.RLock()
+        self._filler_thread: threading.Thread | None = None
+        self._filler_used = False
+        self._rng = rng or random.Random()
+        self._last_generic = ""
+
+    # ---------- основная речь ----------
+
+    def speak(self, text: str) -> None:
+        self.wait_filler()
+        with self._lock:
+            self.speaker.speak(text)
+
+    def speak_short(self, text: str) -> None:
+        """Короткие повторяющиеся фразы ("Да?") из кеша, если движок умеет кешировать."""
+        with self._lock:
+            self._speak_cached(text)
+
+    # ---------- заполнители ----------
+
+    def begin_request(self) -> None:
+        """Вызывать перед каждым запросом к агенту: заполнитель звучит не больше раза за запрос."""
+        self._filler_used = False
+
+    def filler_for(self, tool_name: str) -> str:
+        tool = self.registry.get(tool_name) if self.registry else None
+        if tool is not None and tool.filler is not None:
+            return tool.filler
+        choices = [f for f in GENERIC_FILLERS if f != self._last_generic] or list(GENERIC_FILLERS)
+        self._last_generic = self._rng.choice(choices)
+        return self._last_generic
+
+    def on_tool_call(self, tool_name: str, _args: dict | None = None) -> None:
+        if self._filler_used:
+            return
+        self._filler_used = True
+        phrase = self.filler_for(tool_name)
+        if not phrase:
+            return
+        log.info("Заполнитель: %s", phrase)
+        self._filler_thread = threading.Thread(target=self._play_filler, args=(phrase,), daemon=True)
+        self._filler_thread.start()
+
+    def wait_filler(self) -> None:
+        if self._filler_thread is not None:
+            self._filler_thread.join()
+            self._filler_thread = None
+
+    def _play_filler(self, phrase: str) -> None:
+        try:
+            with self._lock:
+                self._speak_cached(phrase)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Заполнитель не прозвучал: %s", exc)
+
+    def _speak_cached(self, text: str) -> None:
+        if hasattr(self.speaker, "speak_cached"):
+            self.speaker.speak_cached(text)
+        else:
+            self.speaker.speak(text)
+
+    # ---------- прогрев кеша ----------
+
+    def all_phrases(self) -> list[str]:
+        phrases = list(GENERIC_FILLERS) + list(SHORT_PHRASES)
+        if self.registry:
+            phrases += [t.filler for t in self.registry.all() if t.filler]
+        return list(dict.fromkeys(phrases))
+
+    def prefetch_async(self, extra: Iterable[str] = ()) -> None:
+        if not hasattr(self.speaker, "prefetch"):
+            return
+        phrases = self.all_phrases() + list(extra)
+        threading.Thread(target=self.speaker.prefetch, args=(phrases,), daemon=True).start()
