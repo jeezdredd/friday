@@ -27,16 +27,15 @@ def _print_tool_call(name: str, args: dict) -> None:
     print(f"  [tool] {name}({json.dumps(args, ensure_ascii=False)})")
 
 
-def _make_voice(agent: Agent):
-    """Голосовой выход: ответы, заполнители во время работы инструментов, кеш коротких фраз."""
+def _make_voice(agent: Agent, background: bool = True):
+    """Голосовой выход: ответы, заполнители во время работы инструментов, кеш коротких фраз.
+    background=False: не запускать прогрев сразу (например, пока идёт знакомство в терминале)."""
     from friday.voice.output import VoiceOutput
     from friday.voice.tts import create_speaker
 
     voice = VoiceOutput(create_speaker(), agent.registry)
-    if hasattr(voice.speaker, "warmup"):
-        # открываем аудиопоток к колонке сразу, а не на первом ответе
-        threading.Thread(target=voice.speaker.warmup, daemon=True).start()
-    voice.prefetch_async()
+    if background:
+        _start_voice_background(voice)
 
     # заполнитель запускается, как только модель начала вызывать инструмент (включая поиск)
     previous = agent.on_tool_start
@@ -48,6 +47,13 @@ def _make_voice(agent: Agent):
 
     agent.on_tool_start = on_tool_start
     return voice
+
+
+def _start_voice_background(voice, extra_phrases=()) -> None:
+    if hasattr(voice.speaker, "warmup"):
+        # открываем аудиопоток к колонке сразу, а не на первом ответе
+        threading.Thread(target=voice.speaker.warmup, daemon=True).start()
+    voice.prefetch_async(extra=extra_phrases)
 
 
 def _start_reminders(announce):
@@ -152,11 +158,12 @@ def wake_loop(agent: Agent) -> None:
     from friday.voice.stt import transcribe
     from friday.voice.wakeword import create_detector
 
-    voice = _make_voice(agent)
+    # Фоновый прогрев и кеш фраз запускаем после знакомства: иначе их логи
+    # печатаются поверх вопроса в терминале и кажется, что всё зависло
+    voice = _make_voice(agent, background=False)
     gate = _identity_gate(voice)
     owner = gate.speaker_id.voiceprint.name if gate.enabled else ""
-    if owner:
-        voice.prefetch_async(extra=[greeting_for(owner)])
+    _start_voice_background(voice, [greeting_for(owner)] if owner else [])
     print("Загружаю модели...")
     detector = create_detector()
     transcribe(np.zeros(16_000, dtype=np.float32))  # прогрев whisper

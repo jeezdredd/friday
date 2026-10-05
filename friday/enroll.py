@@ -88,7 +88,7 @@ def run_enrollment(name: str | None = None, speak=None, mic: MicStream | None = 
     default_name = settings.user_name or (load_voiceprint().name if load_voiceprint() else "")
     if not name:
         hint = f" [{default_name}]" if default_name else ""
-        name = input(f"Как тебя зовут?{hint} ").strip() or default_name
+        name = input(f"Как тебя зовут? Напиши имя и нажми Enter{hint}: ").strip() or default_name
     if not name:
         print("Без имени не получится, запусти ещё раз.")
         return False
